@@ -1,0 +1,11 @@
+opencv-python==4.5.5.64
+numpy==1.21.6
+picamera==1.13
+RPi.GPIO==0.7.1
+imutils==0.5.4
+scikit-image==0.19.3
+scikit-learn==1.0.2
+joblib==1.1.0
+google-api-python-client==2.65.0
+google-auth==2.14.1
+requests==2.28.1

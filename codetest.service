@@ -1,0 +1,17 @@
+[Unit]
+Description=Retro-EvaraFlow Water Meter Reader
+After=network.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/Desktop/Evaratech/Evaraflow
+ExecStartPre=/bin/sleep 10
+ExecStart=/usr/bin/python3 /home/pi/Desktop/Evaratech/Evaraflow/main_service.py
+Restart=always
+RestartSec=10
+StandardOutput=null
+StandardError=append:/home/pi/Desktop/Evaratech/Evaraflow/error.log
+
+[Install]
+WantedBy=multi-user.target

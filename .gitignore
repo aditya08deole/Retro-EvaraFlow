@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+*.egg-info/
+dist/
+build/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Device-specific files (CRITICAL - per deployment workflow)
+Variable.txt
+var2.txt
+config_WM.py
+
+# Runtime state
+meter_state.json
+error.log
+
+# Captured images
+*.jpg
+*.jpeg
+*.png
+debug_output/
+sheets/
+data/raw_images/
+
+# Credentials (keep template, ignore actual)
+service_account.json
+.credentials_local.xlsx
+
+# OS
+.DS_Store
+Thumbs.db

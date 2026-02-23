@@ -37,6 +37,8 @@ data/raw_images/
 # Credentials (keep template, ignore actual)
 service_account.json
 .credentials_local.xlsx
+rclone.conf
+.rclone.backup
 
 # OS
 .DS_Store

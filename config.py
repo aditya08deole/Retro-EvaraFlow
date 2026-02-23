@@ -31,9 +31,6 @@ FALLBACK_ROI_POINTS = [[144, 127], [1569, 103], [1582, 517], [152, 539]]
 MAX_FLOW_RATE = 100.0
 MIN_TIME_DIFF = 1
 
-# Cloud Services
-GDRIVE_CREDENTIALS_PATH = "service_account.json"
-
 # Timing (Can be overridden per-device in credentials_store.xlsx)
 CAPTURE_INTERVAL = 300
 

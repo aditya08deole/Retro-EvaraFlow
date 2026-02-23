@@ -96,8 +96,6 @@ while IFS= read -r line; do
         "scikit-learn") import_name="sklearn" ;;
         "scikit-image") import_name="skimage" ;;
         "python-telegram-bot") import_name="telegram" ;;
-        "google-api-python-client") import_name="googleapiclient" ;;
-        "google-auth") import_name="google.auth" ;;
         "RPi.GPIO") import_name="RPi.GPIO" ;;
         *) import_name="$package_name" ;;
     esac
@@ -122,6 +120,41 @@ fi
 sudo pip3 install --no-cache-dir -r requirements.txt
 
 echo "✓ Package installation complete"
+
+echo ""
+echo "========================================"
+echo "[3.5/6] Installing rclone..."
+echo "========================================"
+
+if command -v rclone &> /dev/null; then
+    RCLONE_VERSION=$(rclone version | head -n1)
+    echo "✓ rclone already installed: $RCLONE_VERSION"
+else
+    echo "Installing rclone from Debian repository..."
+    sudo apt update -qq
+    
+    if sudo apt install -y rclone; then
+        RCLONE_VERSION=$(rclone version | head -n1)
+        echo "✓ rclone installed: $RCLONE_VERSION"
+        
+        # Create config directory
+        mkdir -p ~/.config/rclone
+        chmod 700 ~/.config/rclone
+        echo "✓ rclone config directory created"
+        
+        echo ""
+        echo "⚠️  IMPORTANT: rclone configuration required for Google Drive uploads"
+        echo "   After installation completes, run: rclone config"
+        echo "   Then select: n → gdrive → drive → follow OAuth prompts"
+        echo ""
+    else
+        echo "⚠️  rclone installation failed"
+        echo "   Google Drive uploads will not work until rclone is configured"
+        echo "   Install manually: sudo apt install rclone"
+    fi
+fi
+
+echo "✓ rclone setup complete"
 
 echo ""
 echo "[4/6] Creating required files..."

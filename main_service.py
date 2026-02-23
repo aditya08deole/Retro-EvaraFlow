@@ -10,6 +10,7 @@ import time
 import gc
 import os
 import sys
+import cv2
 from datetime import datetime, timedelta
 
 from src.capture import CameraCapture
@@ -18,6 +19,7 @@ from src.preprocess import Preprocessor
 from src.digit_classifier import DigitClassifier
 from src.flow_validator import FlowValidator
 from src.cloud_uploader import CloudUploader
+from src.rclone_uploader import RcloneUploader
 from src.state_manager import StateManager
 from src.credential_manager import load_from_config_wm, CredentialError
 
@@ -78,13 +80,19 @@ class MeterReaderService:
         self.validator = FlowValidator(max_flow_rate=max_flow_rate,
                                        min_time_diff=config.MIN_TIME_DIFF)
         
-        # Cloud uploader now uses dynamic credentials
+        # Cloud uploader for ThingSpeak and Telegram
         self.uploader = CloudUploader(
             thingspeak_api_key=self.credentials['thingspeak_api_key'],
             telegram_bot_token=self.credentials['telegram_bot_token'],
             telegram_chat_id=self.credentials['telegram_chat_id'],
-            gdrive_credentials_path=config.GDRIVE_CREDENTIALS_PATH,
             node_name=self.node_name
+        )
+        
+        # rclone uploader for Google Drive
+        self.rclone_uploader = RcloneUploader(
+            remote_name='gdrive',
+            timeout=30,
+            max_retries=3
         )
         
         self.state_manager = StateManager(state_file=config.STATE_FILE)
@@ -164,7 +172,28 @@ class MeterReaderService:
             self.uploader.send_telegram(image, validated_reading, flow_rate)
         
         if self.enable_gdrive:
-            self.uploader.upload_gdrive(image, folder_id=self.gdrive_folder_id)
+            # Save image temporarily for rclone upload
+            try:
+                timestamp = int(time.time())
+                temp_path = f"/tmp/meter_{self.device_id}_{timestamp}.jpg"
+                cv2.imwrite(temp_path, image, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                
+                # Upload via rclone
+                upload_success = self.rclone_uploader.upload_image(
+                    temp_path,
+                    self.gdrive_folder_id
+                )
+                
+                # Clean up temp file
+                try:
+                    os.remove(temp_path)
+                except:
+                    pass
+                    
+                if not upload_success:
+                    self._log_error("Google Drive upload failed")
+            except Exception as e:
+                self._log_error(f"Google Drive upload exception: {str(e)}")
         
         elapsed = time.time() - start_time
         

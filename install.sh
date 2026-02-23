@@ -1,10 +1,30 @@
 #!/bin/bash
 # Retro-EvaraFlow Installation Script - Smart Package Management
-# Automatically installs only missing packages to prevent version conflicts
+# Compatible with RPi 3B+ (ARM7) and RPi Zero W (ARM6)
 
 echo "=========================================="
-echo "  Retro-EvaraFlow Installation v1.0"
+echo "  Retro-EvaraFlow Installation v1.1"
 echo "=========================================="
+echo ""
+
+# Detect Raspberry Pi model
+detect_rpi_model() {
+    if grep -q "Raspberry Pi Zero W" /proc/cpuinfo; then
+        echo "Zero W"
+    elif grep -q "Raspberry Pi 3 Model B Plus" /proc/cpuinfo; then
+        echo "3B+"
+    else
+        # Default - check for ARM version
+        if [ "$(uname -m)" = "armv6l" ]; then
+            echo "Zero W"
+        else
+            echo "3B+"
+        fi
+    fi
+}
+
+RPI_MODEL=$(detect_rpi_model)
+echo "📟 Detected: Raspberry Pi $RPI_MODEL"
 echo ""
 
 # Function to check if Python package is installed
@@ -39,48 +59,69 @@ else
     echo "✓ pip3 already installed"
 fi
 
+# Install system dependencies based on model
+echo ""
+echo "  Installing system dependencies..."
+if [ "$RPI_MODEL" = "Zero W" ]; then
+    echo "  ⚙️  Optimizing for RPi Zero W (512MB RAM, ARM6)..."
+    sudo apt-get install -y python3-dev libatlas-base-dev libopenjp2-7 libtiff5
+else
+    echo "  ⚙️  Optimizing for RPi 3B+ (1GB RAM, ARM7)..."
+    sudo apt-get install -y python3-dev libatlas-base-dev
+fi
+
 echo ""
 echo "[3/6] Checking required Python packages..."
 
-# List of required packages with minimum versions
-declare -A PACKAGES=(
-    ["cv2"]="opencv-python>=4.5.0"
-    ["numpy"]="numpy>=1.21.0"
-    ["pandas"]="pandas>=1.3.0"
-    ["openpyxl"]="openpyxl>=3.0.9"
-    ["sklearn"]="scikit-learn>=1.0.0"
-    ["joblib"]="joblib>=1.1.0"
-    ["requests"]="requests>=2.26.0"
-    ["telegram"]="python-telegram-bot>=13.14"
-)
+# Use requirements.txt for installation
+if [ ! -f "requirements.txt" ]; then
+    echo "⚠️  requirements.txt not found!"
+    exit 1
+fi
 
-MISSING_PACKAGES=()
+echo "  Checking installed packages vs requirements..."
 
-for import_name in "${!PACKAGES[@]}"; do
-    pip_package="${PACKAGES[$import_name]}"
+# Parse requirements.txt and check each package
+while IFS= read -r line; do
+    # Skip comments and empty lines
+    [[ "$line" =~ ^#.*$ ]] && continue
+    [[ -z "$line" ]] && continue
+    
+    # Extract package name (before == or >= or !=)
+    package_name=$(echo "$line" | sed 's/[=!<>].*//' | xargs)
+    
+    # Map pip package names to import names
+    case "$package_name" in
+        "opencv-python-headless") import_name="cv2" ;;
+        "scikit-learn") import_name="sklearn" ;;
+        "scikit-image") import_name="skimage" ;;
+        "python-telegram-bot") import_name="telegram" ;;
+        "google-api-python-client") import_name="googleapiclient" ;;
+        "google-auth") import_name="google.auth" ;;
+        "RPi.GPIO") import_name="RPi.GPIO" ;;
+        *) import_name="$package_name" ;;
+    esac
     
     if check_python_package "$import_name"; then
-        version=$(check_package_version "$import_name")
-        echo "✓ $import_name already installed: $version"
+        version=$(check_package_version "$import_name" 2>/dev/null || echo "unknown")
+        echo "  ✓ $package_name ($version)"
     else
-        echo "✗ $import_name not found - will install"
-        MISSING_PACKAGES+=("$pip_package")
+        echo "  ✗ $package_name - missing"
     fi
-done
+done < requirements.txt
 
-# Install missing packages
-if [ ${#MISSING_PACKAGES[@]} -gt 0 ]; then
-    echo ""
-    echo "Installing ${#MISSING_PACKAGES[@]} missing packages..."
-    for package in "${MISSING_PACKAGES[@]}"; do
-        echo "  Installing $package..."
-        sudo pip3 install --upgrade "$package"
-    done
-    echo "✓ All missing packages installed"
-else
-    echo ""
-    echo "✓ All required packages already installed!"
+echo ""
+echo "  Installing/updating packages from requirements.txt..."
+
+if [ "$RPI_MODEL" = "Zero W" ]; then
+    echo "  ⏳ Note: Installation on Zero W may take 15-30 minutes..."
+    echo "     (scikit-learn requires compilation)"
 fi
+
+# Install with proper flags for ARM compatibility
+sudo pip3 install --no-cache-dir -r requirements.txt
+
+echo "✓ Package installation complete"
 
 echo ""
 echo "[4/6] Creating required files..."

@@ -1,9 +1,14 @@
 #!/bin/bash
 # Retro-EvaraFlow Installation Script - Smart Package Management
 # Compatible with RPi 3B+ (ARM7) and RPi Zero W (ARM6)
+# 
+# v1.2 Changes:
+#   - Install latest rclone from official source (fixes OAuth compatibility)
+#   - Auto-upgrade old rclone v1.45 if detected
+#   - Enhanced camera capture compatibility (PiCamera v2.1)
 
 echo "=========================================="
-echo "  Retro-EvaraFlow Installation v1.1"
+echo "  Retro-EvaraFlow Installation v1.2"
 echo "=========================================="
 echo ""
 
@@ -123,17 +128,27 @@ echo "✓ Package installation complete"
 
 echo ""
 echo "========================================"
-echo "[3.5/6] Installing rclone..."
+echo "[3.5/6] Installing rclone (Latest Version)..."
 echo "========================================"
 
 if command -v rclone &> /dev/null; then
     RCLONE_VERSION=$(rclone version | head -n1)
     echo "✓ rclone already installed: $RCLONE_VERSION"
-else
-    echo "Installing rclone from Debian repository..."
-    sudo apt update -qq
     
-    if sudo apt install -y rclone; then
+    # Check if it's an old version from apt repository
+    if [[ "$RCLONE_VERSION" == *"v1.45"* ]]; then
+        echo "⚠️  Old rclone v1.45 detected (incompatible with Google OAuth)"
+        echo "   Upgrading to latest version..."
+        sudo apt remove -y rclone
+        curl https://rclone.org/install.sh | sudo bash
+        RCLONE_VERSION=$(rclone version | head -n1)
+        echo "✓ rclone upgraded to: $RCLONE_VERSION"
+    fi
+else
+    echo "Installing latest rclone from official source..."
+    
+    # Use official rclone install script (installs latest version)
+    if curl https://rclone.org/install.sh | sudo bash; then
         RCLONE_VERSION=$(rclone version | head -n1)
         echo "✓ rclone installed: $RCLONE_VERSION"
         
@@ -145,12 +160,18 @@ else
         echo ""
         echo "⚠️  IMPORTANT: rclone configuration required for Google Drive uploads"
         echo "   After installation completes, run: rclone config"
-        echo "   Then select: n → gdrive → drive → follow OAuth prompts"
+        echo "   Setup guide:"
+        echo "   1. Choose 'n' for new remote"
+        echo "   2. Name it 'gdrive'"
+        echo "   3. Select 'drive' (Google Drive)"
+        echo "   4. Leave client_id and client_secret blank"
+        echo "   5. Choose scope=1 (full access)"
+        echo "   6. For auto-config, follow OAuth prompts"
         echo ""
     else
         echo "⚠️  rclone installation failed"
         echo "   Google Drive uploads will not work until rclone is configured"
-        echo "   Install manually: sudo apt install rclone"
+        echo "   Install manually: curl https://rclone.org/install.sh | sudo bash"
     fi
 fi
 

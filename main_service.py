@@ -65,7 +65,8 @@ class MeterReaderService:
         self.capture = CameraCapture(relay_pin=config.RELAY_PIN,
                                      resolution=config.CAMERA_RESOLUTION,
                                      warmup_delay=config.WARMUP_DELAY,
-                                     focus_delay=config.FOCUS_DELAY)
+                                     focus_delay=config.FOCUS_DELAY,
+                                     post_capture_delay=config.POST_CAPTURE_DELAY)
         
         self.roi_extractor = ROIExtractor(width=config.ROI_WIDTH,
                                           height=config.ROI_HEIGHT,

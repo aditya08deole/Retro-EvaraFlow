@@ -10,8 +10,11 @@ NO HARDCODED CREDENTIALS IN THIS FILE!
 # Hardware Settings (Fleet-wide defaults)
 RELAY_PIN = 23
 CAMERA_RESOLUTION = (1640, 1232)
-WARMUP_DELAY = 3
-FOCUS_DELAY = 2
+
+# Camera timing (strictly enforced sequence)
+WARMUP_DELAY = 0.5        # Initial delay after LED ON (seconds)
+FOCUS_DELAY = 3           # Focus adjustment time (seconds) - LED stays ON
+POST_CAPTURE_DELAY = 3    # Keep LED ON after capture (seconds)
 
 # Model Configuration
 MODEL_PATH = "rf_rasp_classifier.sav"

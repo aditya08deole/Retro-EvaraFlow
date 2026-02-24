@@ -106,8 +106,12 @@ class RcloneUploader:
             logger.error(f"❌ Image file not found: {image_path}")
             return False
         
-        # Construct destination path: remote_name:folder_id
-        remote_path = f"{self.remote_name}:{folder_id}"
+        # Construct destination path: remote_name:{folder_id} (curly braces for IDs)
+        # If folder_id looks like an ID (contains hyphens/underscores), wrap in {}
+        if '-' in folder_id or '_' in folder_id:
+            remote_path = f"{self.remote_name}:{{{folder_id}}}"
+        else:
+            remote_path = f"{self.remote_name}:{folder_id}"
         
         # Build rclone command with reliability flags
         cmd = [

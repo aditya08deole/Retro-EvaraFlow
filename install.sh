@@ -135,6 +135,8 @@ echo "  Installing/updating packages from requirements.txt..."
 if [ "$RPI_MODEL" = "Zero W" ]; then
     echo "  ⏳ Note: Installation may take 5-10 minutes..."
     echo "     (opencv-contrib requires compilation)"
+fi
+
 # Uninstall all potentially conflicting OpenCV dependencies to prevent missing 'cv2.aruco'
 echo "  🧹 Cleaning up corrupted OpenCV installations from armv6l cache..."
 # 1. Remove the OS-level version which lacks ArUco

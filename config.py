@@ -1,49 +1,144 @@
 """
-System Configuration - Fleet-Wide Settings
+RetroFit Image Capture Service v2.0 - Configuration
+Cloud Processing Architecture (No Edge ML)
 
-NOTE: Device-specific credentials are now loaded from credentials_store.xlsx
-      based on device_id from config_WM.py (following deployment workflow)
+Device-specific credentials loaded from credentials_store.csv
+Device identity from config_WM.py (device-specific, not in git)
 
 NO HARDCODED CREDENTIALS IN THIS FILE!
 """
 
-# Hardware Settings (Fleet-wide defaults)
-RELAY_PIN = 23
-CAMERA_RESOLUTION = (1640, 1232)
+# ============================================================
+# CAMERA SETTINGS
+# ============================================================
 
-# Camera timing (strictly enforced sequence)
-WARMUP_DELAY = 0.5        # Initial delay after LED ON (seconds)
-FOCUS_DELAY = 3           # Focus adjustment time (seconds) - LED stays ON
-POST_CAPTURE_DELAY = 3    # Keep LED ON after capture (seconds)
+# GPIO Pin for LED/Relay Control
+LED_PIN = 23
 
-# Model Configuration
-MODEL_PATH = "rf_rasp_classifier.sav"
-MIN_CONTOUR_AREA = 1500
-CROP_WIDTH = 540
-CONFIDENCE_THRESHOLD = 0.6  # Default, per-device override in credentials_store
+# Camera Resolution (Max for PiCamera v2.1)
+CAMERA_RESOLUTION = (1640, 1232)  # Width x Height in pixels
 
-# ROI Settings
-ROI_WIDTH = 650
-ROI_HEIGHT = 215
-ROI_ZOOM = 60
+# Camera Rotation (0, 90, 180, or 270 degrees)
+CAMERA_ROTATION = 180  # Adjust based on physical camera orientation
 
-# Fallback ROI coordinates (if ArUco markers fail)
-FALLBACK_ROI_POINTS = [[144, 127], [1569, 103], [1582, 517], [152, 539]]
+# Camera Timing Sequence (seconds)
+WARMUP_DELAY = 0.5        # Delay after LED ON before starting camera
+FOCUS_DELAY = 3.0         # Focus adjustment time (camera active, LED ON)
+POST_CAPTURE_DELAY = 3.0  # Keep LED ON after capture before turning OFF
 
-# Flow Validation (Fleet-wide defaults)
-MAX_FLOW_RATE = 100.0
-MIN_TIME_DIFF = 1
+# Image Quality
+JPEG_QUALITY = 95  # 1-100, higher = better quality but larger file size
 
-# Timing (Can be overridden per-device in credentials_store.xlsx)
-CAPTURE_INTERVAL = 300
 
-# Retry Configuration
-MAX_RETRIES = 1
+# ============================================================
+# ARUCO MARKER SETTINGS
+# ============================================================
 
-# Persistence
-STATE_FILE = "meter_state.json"
+# ArUco Dictionary
+ARUCO_DICT = "DICT_4X4_50"
+
+# Required Marker IDs (for ROI extraction)
+ARUCO_MARKER_IDS = [0, 1, 2, 3]
+
+# ROI Padding (percentage around detected markers)
+ROI_PADDING_PERCENT = 10  # Add 10% padding around markers
+
+
+# ============================================================
+# UPLOAD SETTINGS
+# ============================================================
+
+# Upload Retry Configuration
+UPLOAD_MAX_RETRIES = 3
+UPLOAD_RETRY_DELAYS = [2, 5, 10]  # Exponential backoff (seconds)
+UPLOAD_TIMEOUT = 120  # Maximum time for single upload attempt (seconds)
+
+# rclone Configuration
+RCLONE_REMOTE_NAME = "gdrive"  # Must match 'rclone config' remote name
+
+
+# ============================================================
+# SERVICE SETTINGS
+# ============================================================
+
+# Capture Interval
+CAPTURE_INTERVAL_MINUTES = 5  # How often to capture images (minutes)
+
+# Logging
 ERROR_LOG = "error.log"
+LOG_LEVEL = "INFO"  # DEBUG, INFO, WARNING, ERROR
 
-# Credential Store (Fleet deployment)
-CREDENTIAL_STORE_PATH = "credentials_store.xlsx"
-CONFIG_WM_PATH = "config_WM.py"  # Device identity file
+
+# ============================================================
+# CREDENTIAL MANAGEMENT
+# ============================================================
+
+# Credential Store (CSV file with device credentials)
+CREDENTIAL_STORE_PATH = "credentials_store.csv"
+
+# Device Identity File (created manually on each device, NOT in git)
+CONFIG_WM_PATH = "config_WM.py"
+
+
+# ============================================================
+# CONFIG VALIDATION
+# ============================================================
+
+def validate_config():
+    """
+    Validate configuration parameters.
+    Raises ValueError if any parameter is invalid.
+    """
+    errors = []
+    
+    # Camera settings
+    if not isinstance(CAMERA_RESOLUTION, tuple) or len(CAMERA_RESOLUTION) != 2:
+        errors.append("CAMERA_RESOLUTION must be a tuple of (width, height)")
+    elif CAMERA_RESOLUTION[0] <= 0 or CAMERA_RESOLUTION[1] <= 0:
+        errors.append("CAMERA_RESOLUTION values must be positive")
+    
+    if CAMERA_ROTATION not in [0, 90, 180, 270]:
+        errors.append("CAMERA_ROTATION must be 0, 90, 180, or 270 degrees")
+    
+    if WARMUP_DELAY < 0 or FOCUS_DELAY < 0 or POST_CAPTURE_DELAY < 0:
+        errors.append("Camera timing delays must be non-negative")
+    
+    if not (1 <= JPEG_QUALITY <= 100):
+        errors.append("JPEG_QUALITY must be between 1 and 100")
+    
+    # Upload settings
+    if UPLOAD_MAX_RETRIES < 1:
+        errors.append("UPLOAD_MAX_RETRIES must be at least 1")
+    
+    if len(UPLOAD_RETRY_DELAYS) != UPLOAD_MAX_RETRIES:
+        errors.append(f"UPLOAD_RETRY_DELAYS must have {UPLOAD_MAX_RETRIES} elements (one per retry)")
+    
+    if any(delay < 0 for delay in UPLOAD_RETRY_DELAYS):
+        errors.append("UPLOAD_RETRY_DELAYS values must be non-negative")
+    
+    if UPLOAD_TIMEOUT < 10:
+        errors.append("UPLOAD_TIMEOUT must be at least 10 seconds")
+    
+    # Service settings
+    if CAPTURE_INTERVAL_MINUTES < 1:
+        errors.append("CAPTURE_INTERVAL_MINUTES must be at least 1")
+    
+    if LOG_LEVEL not in ["DEBUG", "INFO", "WARNING", "ERROR"]:
+        errors.append("LOG_LEVEL must be one of: DEBUG, INFO, WARNING, ERROR")
+    
+    # Raise error if any validation failed
+    if errors:
+        raise ValueError("Configuration validation failed:\\n  - " + "\\n  - ".join(errors))
+
+
+# ============================================================
+# REMOVED SETTINGS (No longer needed in v2.0)
+# ============================================================
+# - MODEL_PATH (no ML model)
+# - CONFIDENCE_THRESHOLD (no classification)
+# - ROI_WIDTH, ROI_HEIGHT, ROI_ZOOM (dynamic from ArUco)
+# - FALLBACK_ROI_POINTS (no fallback, ArUco only)
+# - MAX_FLOW_RATE, MIN_TIME_DIFF (no flow validation)
+# - STATE_FILE (no meter state tracking)
+# - MAX_RETRIES (replaced with UPLOAD_MAX_RETRIES)
+# - CAPTURE_INTERVAL (replaced with CAPTURE_INTERVAL_MINUTES)

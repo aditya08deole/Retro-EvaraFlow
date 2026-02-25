@@ -1,7 +1,13 @@
 """
-Dynamic Credential Management System
-Loads device-specific credentials from credentials_store.xlsx based on device_id
+Credential Management System - v2.0 Simplified
+Loads device-specific credentials from credentials_store.csv
 Supports multi-device fleet deployment with zero hardcoded credentials
+
+v2.0 Changes:
+- Removed ThingSpeak, Google Sheets support
+- Removed enable flags (always upload to Telegram + Drive)
+- Removed ML-related settings (confidence_threshold, max_flow_rate)
+- Simplified to essential credentials only
 """
 
 import os
@@ -25,245 +31,152 @@ class CredentialMissingError(CredentialError):
     pass
 
 
-class CredentialManager:
+def load_from_config_wm(config_file='config_WM.py', credential_store='credentials_store.csv'):
     """
-    Manages dynamic credential loading from Excel-based credential store.
-    
-    Each device reads its unique device_id and extracts only its credentials
-    from the central credentials_store.xlsx file.
-    """
-    
-    def __init__(self, device_id, credential_store_path='credentials_store.xlsx'):
-        """
-        Initialize credential manager
-        
-        Args:
-            device_id: Unique device identifier (e.g., "PH-03")
-            credential_store_path: Path to Excel credential file
-        """
-        self.device_id = device_id
-        self.credential_store_path = credential_store_path
-        self.credentials = None
-        
-    def load_credentials(self):
-        """
-        Load credentials for this device from Excel store
-        
-        Returns:
-            dict: Credential dictionary with all device settings
-            
-        Raises:
-            DeviceNotFoundError: If device_id not found in store
-            CredentialMissingError: If required fields are empty
-            FileNotFoundError: If credential store doesn't exist
-        """
-        # Try CSV fallback if Excel not available
-        if not os.path.exists(self.credential_store_path):
-            csv_path = self.credential_store_path.replace('.xlsx', '.csv')
-            if os.path.exists(csv_path):
-                logger.warning(f"Excel not found, using CSV: {csv_path}")
-                return self._load_from_csv(csv_path)
-            raise FileNotFoundError(f"Credential store not found: {self.credential_store_path}")
-        
-        try:
-            import pandas as pd
-        except ImportError:
-            logger.warning("pandas not available, falling back to CSV")
-            csv_path = self.credential_store_path.replace('.xlsx', '.csv')
-            return self._load_from_csv(csv_path)
-        
-        try:
-            # Load Excel file
-            df = pd.read_excel(self.credential_store_path, sheet_name=0)
-            
-            # Find device row
-            device_row = df[df['device_id'] == self.device_id]
-            
-            if device_row.empty:
-                available_devices = df['device_id'].tolist()
-                raise DeviceNotFoundError(
-                    f"Device '{self.device_id}' not found in credential store. "
-                    f"Available devices: {available_devices}"
-                )
-            
-            # Extract credentials
-            row = device_row.iloc[0]
-            
-            self.credentials = {
-                'device_id': str(row['device_id']),
-                'node_name': str(row['node_name']),
-                'thingspeak_api_key': str(row['thingspeak_api_key']),
-                'telegram_bot_token': str(row['telegram_bot_token']),
-                'telegram_chat_id': str(row['telegram_chat_id']),
-                'gdrive_folder_id': str(row.get('gdrive_folder_id', '')),
-                'gsheets_deployment_id': str(row.get('gsheets_deployment_id', '')),
-                'enable_thingspeak': bool(int(row['enable_thingspeak'])),
-                'enable_telegram': bool(int(row['enable_telegram'])),
-                'enable_gdrive': bool(int(row['enable_gdrive'])),
-                'enable_gsheets': bool(int(row.get('enable_gsheets', 0))),
-                'capture_interval': int(row.get('capture_interval', 300)),
-                'confidence_threshold': float(row.get('confidence_threshold', 0.6)),
-                'max_flow_rate': float(row.get('max_flow_rate', 100.0)),
-                'active': bool(int(row.get('active', 1)))
-            }
-            
-            # Validate required credentials
-            self._validate_credentials()
-            
-            logger.info(f"✓ Loaded credentials for {self.device_id} ({self.credentials['node_name']})")
-            logger.info(f"  ThingSpeak: {'ON' if self.credentials['enable_thingspeak'] else 'OFF'}")
-            logger.info(f"  Telegram: {'ON' if self.credentials['enable_telegram'] else 'OFF'}")
-            logger.info(f"  Google Drive: {'ON' if self.credentials['enable_gdrive'] else 'OFF'}")
-            
-            return self.credentials
-            
-        except Exception as e:
-            if isinstance(e, CredentialError):
-                raise
-            raise CredentialError(f"Failed to load credentials: {str(e)}")
-    
-    def _load_from_csv(self, csv_path):
-        """Fallback: Load credentials from CSV file"""
-        import csv
-        
-        if not os.path.exists(csv_path):
-            raise FileNotFoundError(f"CSV credential store not found: {csv_path}")
-        
-        with open(csv_path, 'r') as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                if row['device_id'] == self.device_id:
-                    self.credentials = {
-                        'device_id': str(row['device_id']),
-                        'node_name': str(row['node_name']),
-                        'thingspeak_api_key': str(row['thingspeak_api_key']),
-                        'telegram_bot_token': str(row['telegram_bot_token']),
-                        'telegram_chat_id': str(row['telegram_chat_id']),
-                        'gdrive_folder_id': str(row.get('gdrive_folder_id', '')),
-                        'gsheets_deployment_id': str(row.get('gsheets_deployment_id', '')),
-                        'enable_thingspeak': bool(int(row['enable_thingspeak'])),
-                        'enable_telegram': bool(int(row['enable_telegram'])),
-                        'enable_gdrive': bool(int(row['enable_gdrive'])),
-                        'enable_gsheets': bool(int(row.get('enable_gsheets', 0))),
-                        'capture_interval': int(row.get('capture_interval', 300)),
-                        'confidence_threshold': float(row.get('confidence_threshold', 0.6)),
-                        'max_flow_rate': float(row.get('max_flow_rate', 100.0)),
-                        'active': bool(int(row.get('active', 1)))
-                    }
-                    
-                    self._validate_credentials()
-                    logger.info(f"✓ Loaded credentials from CSV for {self.device_id}")
-                    return self.credentials
-        
-        raise DeviceNotFoundError(f"Device '{self.device_id}' not found in CSV store")
-    
-    def _validate_credentials(self):
-        """Validate that required credentials are present"""
-        required_fields = []
-        
-        if self.credentials['enable_thingspeak']:
-            if not self.credentials['thingspeak_api_key'] or self.credentials['thingspeak_api_key'] == 'nan':
-                required_fields.append('thingspeak_api_key')
-        
-        if self.credentials['enable_telegram']:
-            if not self.credentials['telegram_bot_token'] or self.credentials['telegram_bot_token'] == 'nan':
-                required_fields.append('telegram_bot_token')
-            if not self.credentials['telegram_chat_id'] or self.credentials['telegram_chat_id'] == 'nan':
-                required_fields.append('telegram_chat_id')
-        
-        if required_fields:
-            raise CredentialMissingError(
-                f"Required credentials missing for {self.device_id}: {', '.join(required_fields)}"
-            )
-    
-    # Convenience accessor methods
-    def get_thingspeak_key(self):
-        """Get ThingSpeak API key"""
-        return self.credentials['thingspeak_api_key'] if self.credentials else None
-    
-    def get_telegram_token(self):
-        """Get Telegram bot token"""
-        return self.credentials['telegram_bot_token'] if self.credentials else None
-    
-    def get_telegram_chat_id(self):
-        """Get Telegram chat ID"""
-        return self.credentials['telegram_chat_id'] if self.credentials else None
-    
-    def get_gdrive_folder_id(self):
-        """Get Google Drive folder ID"""
-        return self.credentials['gdrive_folder_id'] if self.credentials else None
-    
-    def is_thingspeak_enabled(self):
-        """Check if ThingSpeak upload is enabled"""
-        return self.credentials['enable_thingspeak'] if self.credentials else False
-    
-    def is_telegram_enabled(self):
-        """Check if Telegram upload is enabled"""
-        return self.credentials['enable_telegram'] if self.credentials else False
-    
-    def is_gdrive_enabled(self):
-        """Check if Google Drive upload is enabled"""
-        return self.credentials['enable_gdrive'] if self.credentials else False
-    
-    def is_device_active(self):
-        """Check if device is marked as active"""
-        return self.credentials['active'] if self.credentials else False
-    
-    def get_capture_interval(self):
-        """Get capture interval in seconds"""
-        return self.credentials['capture_interval'] if self.credentials else 300
-    
-    def get_confidence_threshold(self):
-        """Get digit classification confidence threshold"""
-        return self.credentials['confidence_threshold'] if self.credentials else 0.6
-    
-    def mask_sensitive_data(self, credential_dict):
-        """Return credential dict with sensitive values masked for logging"""
-        masked = credential_dict.copy()
-        
-        if 'thingspeak_api_key' in masked and masked['thingspeak_api_key']:
-            masked['thingspeak_api_key'] = masked['thingspeak_api_key'][:8] + '***'
-        
-        if 'telegram_bot_token' in masked and masked['telegram_bot_token']:
-            masked['telegram_bot_token'] = masked['telegram_bot_token'][:15] + '***'
-        
-        return masked
-
-
-def quick_load(device_id, credential_store='credentials_store.xlsx'):
-    """
-    Quick helper to load credentials in one call
-    
-    Usage:
-        credentials = quick_load("PH-03")
-    """
-    manager = CredentialManager(device_id, credential_store)
-    return manager.load_credentials()
-
-
-# Backward compatibility: Support config_WM.py style loading
-def load_from_config_wm(config_file='config_WM.py', credential_store='credentials_store.xlsx'):
-    """
-    Load credentials using device_id from config_WM.py file
+    Load credentials using device_id from config_WM.py file.
     
     This maintains compatibility with existing deployment workflow.
+    Each device has a config_WM.py file (not in git) that specifies its device_id,
+    which is then used to look up credentials in the central credentials_store.csv.
     
+    Args:
+        config_file: Path to config_WM.py (device-specific, contains device_id)
+        credential_store: Path to credentials_store.csv (contains all device credentials)
+        
+    Returns:
+        dict: Credential dictionary with device settings
+        
+    Raises:
+        FileNotFoundError: If config_WM.py or credentials_store.csv not found
+        CredentialError: If device_id not found or credentials invalid
+        
     Usage:
         credentials = load_from_config_wm()
+        device_id = credentials['device_id']
+        telegram_token = credentials['telegram_bot_token']
     """
+    # Step 1: Read device_id from config_WM.py
     if not os.path.exists(config_file):
         raise FileNotFoundError(
-            f"{config_file} not found. Create this file with: device_id = \"YOUR-DEVICE-ID\""
+            f"{config_file} not found.\n"
+            f"Create this file with: device_id = \"YOUR-DEVICE-ID\"\n"
+            f"Example: echo 'device_id = \"Node-1\"' > config_WM.py"
         )
     
-    # Read device_id from config_WM.py
     config_vars = {}
-    with open(config_file, 'r') as f:
-        exec(f.read(), config_vars)
+    try:
+        with open(config_file, 'r') as f:
+            exec(f.read(), config_vars)
+    except Exception as e:
+        raise CredentialError(f"Failed to read {config_file}: {str(e)}")
     
     device_id = config_vars.get('device_id')
     if not device_id:
-        raise ValueError(f"device_id not defined in {config_file}")
+        raise CredentialError(
+            f"device_id not defined in {config_file}.\n"
+            f"Add this line: device_id = \"YOUR-DEVICE-ID\""
+        )
     
-    logger.info(f"Loading credentials for device: {device_id}")
-    return quick_load(device_id, credential_store)
+    logger.info(f"Device ID from {config_file}: {device_id}")
+    
+    # Step 2: Load credentials from CSV
+    return load_credentials_from_csv(device_id, credential_store)
+
+
+def load_credentials_from_csv(device_id, csv_path='credentials_store.csv'):
+    """
+    Load credentials for specific device from CSV file.
+    
+    CSV Format:
+        device_id,node_name,telegram_bot_token,telegram_chat_id,gdrive_folder_id,notes
+        Node-1,Node-1,BOT_TOKEN,CHAT_ID,FOLDER_ID,Optional notes
+    
+    Args:
+        device_id: Unique device identifier (e.g., "Node-1")
+        csv_path: Path to CSV credential file
+        
+    Returns:
+        dict: Credential dictionary with all required fields
+        
+    Raises:
+        FileNotFoundError: If CSV file doesn't exist
+        DeviceNotFoundError: If device_id not found in CSV
+        CredentialMissingError: If required fields are empty
+    """
+    import csv
+    
+    if not os.path.exists(csv_path):
+        raise FileNotFoundError(
+            f"Credential store not found: {csv_path}\n"
+            f"Create this file with device credentials.\n"
+            f"See credentials_store.csv.example for format."
+        )
+    
+    try:
+        with open(csv_path, 'r') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                if row['device_id'].strip() == device_id:
+                    # Extract credentials
+                    credentials = {
+                        'device_id': str(row['device_id']).strip(),
+                        'node_name': str(row['node_name']).strip(),
+                        'telegram_bot_token': str(row['telegram_bot_token']).strip(),
+                        'telegram_chat_id': str(row['telegram_chat_id']).strip(),
+                        'gdrive_folder_id': str(row['gdrive_folder_id']).strip(),
+                        'notes': str(row.get('notes', '')).strip()
+                    }
+                    
+                    # Validate required fields
+                    _validate_credentials(credentials)
+                    
+                    logger.info(f"✓ Credentials loaded for {device_id} ({credentials['node_name']})")
+                    logger.info(f"  Telegram Chat ID: {credentials['telegram_chat_id']}")
+                    logger.info(f"  Drive Folder ID: {credentials['gdrive_folder_id'][:20]}...")
+                    
+                    return credentials
+        
+        # Device not found
+        raise DeviceNotFoundError(
+            f"Device '{device_id}' not found in {csv_path}.\n"
+            f"Add device credentials to CSV file."
+        )
+    
+    except csv.Error as e:
+        raise CredentialError(f"Failed to parse CSV {csv_path}: {str(e)}")
+    except KeyError as e:
+        raise CredentialError(
+            f"Missing required column in CSV: {str(e)}\n"
+            f"Required columns: device_id, node_name, telegram_bot_token, "
+            f"telegram_chat_id, gdrive_folder_id"
+        )
+
+
+def _validate_credentials(credentials):
+    """
+    Validate that all required credentials are present and non-empty.
+    
+    Args:
+        credentials: Credential dictionary
+        
+    Raises:
+        CredentialMissingError: If required fields are missing or empty
+    """
+    required_fields = {
+        'telegram_bot_token': 'Telegram Bot Token',
+        'telegram_chat_id': 'Telegram Chat ID',
+        'gdrive_folder_id': 'Google Drive Folder ID'
+    }
+    
+    missing = []
+    for field, display_name in required_fields.items():
+        value = credentials.get(field, '').strip()
+        if not value or value == 'nan' or value == 'None':
+            missing.append(display_name)
+    
+    if missing:
+        raise CredentialMissingError(
+            f"Required credentials missing for {credentials['device_id']}: "
+            f"{', '.join(missing)}\n"
+            f"Update credentials_store.csv with valid values."
+        )

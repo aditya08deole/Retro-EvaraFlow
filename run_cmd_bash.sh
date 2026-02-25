@@ -1,5 +1,5 @@
 #!/bin/bash
-# Auto-update script for Retro-EvaraFlow fleet devices
+# Auto-update script for RetroFit v2.0 fleet devices
 # Repository: https://github.com/aditya08deole/Retro-EvaraFlow.git
 
 # Check internet connectivity
@@ -15,8 +15,6 @@ if [[ $? -eq 0 ]]
     cd /home/pi/Desktop/Evaratech/Evaraflow/
     
     # Protect device-specific files from git operations
-    git update-index --assume-unchanged Variable.txt 2>/dev/null
-    git update-index --assume-unchanged var2.txt 2>/dev/null
     git update-index --assume-unchanged config_WM.py 2>/dev/null
     
     # Pull updates from master branch
@@ -32,7 +30,7 @@ if [[ $? -eq 0 ]]
       echo "Update detected: $cicomid -> $cicomid_new"
       cicomid=$cicomid_new
       
-      # Restart service to apply updates
+      # Restart service to apply updates (auto-clears Python cache)
       sudo systemctl restart codetest.service
       echo "Service restarted successfully"
     else

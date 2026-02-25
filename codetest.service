@@ -1,16 +1,31 @@
 [Unit]
-Description=Retro-EvaraFlow Water Meter Reader
-After=network.target
+Description=RetroFit Image Capture Service v2.0
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
 User=pi
 WorkingDirectory=/home/pi/Desktop/Evaratech/Evaraflow
+
+# Prevent Python bytecode cache to ensure new code runs after git pull
+Environment="PYTHONDONTWRITEBYTECODE=1"
+Environment="PYTHONUNBUFFERED=1"
+
+# Clear any existing .pyc files before starting
 ExecStartPre=/bin/sleep 10
+ExecStartPre=/usr/bin/find /home/pi/Desktop/Evaratech/Evaraflow -type f -name "*.pyc" -delete
+ExecStartPre=/usr/bin/find /home/pi/Desktop/Evaratech/Evaraflow -type d -name "__pycache__" -exec rm -rf {} + 
+
+# Start service
 ExecStart=/usr/bin/python3 /home/pi/Desktop/Evaratech/Evaraflow/main_service.py
+
+# Auto-restart on failure
 Restart=always
-RestartSec=10
-StandardOutput=null
+RestartSec=30
+
+# Logging
+StandardOutput=append:/home/pi/Desktop/Evaratech/Evaraflow/error.log
 StandardError=append:/home/pi/Desktop/Evaratech/Evaraflow/error.log
 
 [Install]

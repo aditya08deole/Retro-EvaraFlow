@@ -1,235 +1,273 @@
 #!/usr/bin/env python3
 """
-Retro-EvaraFlow - Smart Water Meter Retrofit Service
-Multi-device fleet deployment with dynamic credential management
+RetroFit Image Capture Service v2.0
+Cloud Processing Architecture - Capture and Upload Only
 
 Repository: https://github.com/aditya08deole/Retro-EvaraFlow.git
 """
 
-import time
-import gc
 import os
 import sys
+import time
+import logging
+import traceback
 import cv2
-from datetime import datetime, timedelta
+from datetime import datetime
+from pathlib import Path
 
-from src.capture import CameraCapture
-from src.roi_extractor import ROIExtractor
-from src.preprocess import Preprocessor
-from src.digit_classifier import DigitClassifier
-from src.flow_validator import FlowValidator
-from src.cloud_uploader import CloudUploader
-from src.rclone_uploader import RcloneUploader
-from src.state_manager import StateManager
-from src.credential_manager import load_from_config_wm, CredentialError
+# Add src to path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 
+from capture import capture_image
+from roi_extractor import extract_roi
+from cloud_uploader import CloudUploader
+from rclone_uploader import RcloneUploader
+from credential_manager import load_from_config_wm, CredentialError
 import config
 
-class MeterReaderService:
+# Configure logging with both file and console output
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(config.ERROR_LOG),
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+
+class ImageCaptureService:
+    """Main service for image capture and upload - NO edge processing."""
+    
     def __init__(self):
-        # ========== DYNAMIC CREDENTIAL LOADING ==========
-        # Load device-specific credentials from credentials_store.xlsx
-        # based on device_id from config_WM.py
+        """Initialize service with credentials and uploaders."""
+        logging.info("=" * 70)
+        logging.info("RetroFit Image Capture Service v2.0 - Starting")
+        logging.info("Architecture: Cloud Processing (Capture + Upload Only)")
+        logging.info("=" * 70)
+        
+        # Validate configuration
         try:
-            print("Loading device credentials...")
+            config.validate_config()
+            logging.info("✓ Configuration validated")
+        except ValueError as e:
+            logging.error(f"❌ CONFIG ERROR: {str(e)}")
+            sys.exit(1)
+        
+        # Load device credentials
+        try:
+            logging.info("Loading device credentials...")
             self.credentials = load_from_config_wm(
                 config_file=config.CONFIG_WM_PATH,
                 credential_store=config.CREDENTIAL_STORE_PATH
             )
             
-            # Extract device identity and settings
             self.device_id = self.credentials['device_id']
             self.node_name = self.credentials['node_name']
             
-            # Use per-device settings with system defaults as fallback
-            confidence_threshold = self.credentials.get('confidence_threshold', config.CONFIDENCE_THRESHOLD)
-            max_flow_rate = self.credentials.get('max_flow_rate', config.MAX_FLOW_RATE)
-            capture_interval = self.credentials.get('capture_interval', config.CAPTURE_INTERVAL)
-            
-            print(f"✓ Credentials loaded for: {self.device_id} ({self.node_name})")
-            print(f"  ThingSpeak: {'ENABLED' if self.credentials['enable_thingspeak'] else 'DISABLED'}")
-            print(f"  Telegram: {'ENABLED' if self.credentials['enable_telegram'] else 'DISABLED'}")
-            print(f"  Google Drive: {'ENABLED' if self.credentials['enable_gdrive'] else 'DISABLED'}")
+            logging.info(f"✓ Device ID: {self.device_id}")
+            logging.info(f"✓ Node Name: {self.node_name}")
             
         except CredentialError as e:
-            print(f"❌ CREDENTIAL ERROR: {str(e)}")
-            print("\nSetup Required:")
-            print("1. Create config_WM.py: device_id = \"YOUR-DEVICE-ID\"")
-            print("2. Ensure credentials_store.xlsx contains your device_id")
+            logging.error(f"❌ CREDENTIAL ERROR: {str(e)}")
+            logging.error("\nSetup Required:")
+            logging.error("1. Create config_WM.py: device_id = \"YOUR-DEVICE-ID\"")
+            logging.error("2. Ensure credentials_store.csv contains your device_id")
             sys.exit(1)
-        except FileNotFoundError as e:
-            print(f"❌ FILE NOT FOUND: {str(e)}")
+        except Exception as e:
+            logging.error(f"❌ Initialization error: {str(e)}")
+            logging.error(traceback.format_exc())
             sys.exit(1)
         
-        # ========== INITIALIZE MODULES ==========
-        self.capture = CameraCapture(relay_pin=config.RELAY_PIN,
-                                     resolution=config.CAMERA_RESOLUTION,
-                                     warmup_delay=config.WARMUP_DELAY,
-                                     focus_delay=config.FOCUS_DELAY,
-                                     post_capture_delay=config.POST_CAPTURE_DELAY)
+        # Initialize uploaders (always upload to both services)
+        try:
+            self.telegram = CloudUploader(
+                telegram_token=self.credentials['telegram_bot_token'],
+                telegram_chat_id=self.credentials['telegram_chat_id'],
+                node_name=self.node_name
+            )
+            logging.info(f"✓ Telegram: Configured (Chat ID: {self.credentials['telegram_chat_id']})")
+            
+            self.drive = RcloneUploader(
+                remote_name=config.RCLONE_REMOTE_NAME,
+                timeout=config.UPLOAD_TIMEOUT
+            )
+            self.gdrive_folder_id = self.credentials.get('gdrive_folder_id')
+            logging.info(f"✓ Google Drive: Configured (Folder: {self.gdrive_folder_id})")
+            
+        except Exception as e:
+            logging.error(f"❌ Uploader initialization failed: {str(e)}")
+            sys.exit(1)
         
-        self.roi_extractor = ROIExtractor(width=config.ROI_WIDTH,
-                                          height=config.ROI_HEIGHT,
-                                          zoom=config.ROI_ZOOM)
+        # Create output directory for captured images
+        self.output_dir = Path("capture_output")
+        self.output_dir.mkdir(exist_ok=True)
+        logging.info(f"✓ Output directory: {self.output_dir.absolute()}")
         
-        self.preprocessor = Preprocessor(min_contour_area=config.MIN_CONTOUR_AREA,
-                                         crop_width=config.CROP_WIDTH)
+        # Service configuration
+        self.capture_interval = config.CAPTURE_INTERVAL_MINUTES * 60  # Convert to seconds
         
-        self.classifier = DigitClassifier(model_path=config.MODEL_PATH,
-                                          confidence_threshold=confidence_threshold)
-        
-        self.validator = FlowValidator(max_flow_rate=max_flow_rate,
-                                       min_time_diff=config.MIN_TIME_DIFF)
-        
-        # Cloud uploader for ThingSpeak and Telegram
-        self.uploader = CloudUploader(
-            thingspeak_api_key=self.credentials['thingspeak_api_key'],
-            telegram_bot_token=self.credentials['telegram_bot_token'],
-            telegram_chat_id=self.credentials['telegram_chat_id'],
-            node_name=self.node_name
-        )
-        
-        # rclone uploader for Google Drive
-        self.rclone_uploader = RcloneUploader(
-            remote_name='gdrive',
-            timeout=30,
-            max_retries=3
-        )
-        
-        self.state_manager = StateManager(state_file=config.STATE_FILE)
-        
-        self.interval = capture_interval
-        self.max_retries = config.MAX_RETRIES
-        
-        # Store credential flags for conditional uploads
-        self.enable_thingspeak = self.credentials['enable_thingspeak']
-        self.enable_telegram = self.credentials['enable_telegram']
-        self.enable_gdrive = self.credentials['enable_gdrive']
-        self.gdrive_folder_id = self.credentials.get('gdrive_folder_id')
+        logging.info(f"✓ Capture interval: {config.CAPTURE_INTERVAL_MINUTES} minutes")
+        logging.info(f"✓ Camera resolution: {config.CAMERA_RESOLUTION[0]}x{config.CAMERA_RESOLUTION[1]}")
+        logging.info(f"✓ JPEG quality: {config.JPEG_QUALITY}")
+        logging.info("✓ Service initialized successfully")
+        logging.info("=" * 70)
     
-    def process_cycle(self):
-        start_time = time.time()
-        current_timestamp = int(time.time())
+    def process_cycle(self) -> bool:
+        """Execute one capture-upload cycle. Returns True if successful."""
+        cycle_start = time.time()
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         
-        image = None
-        reading = None
-        confidence = 0.0
+        try:
+            logging.info(f"\n{'─' * 70}")
+            logging.info(f"CYCLE START: {timestamp}")
+            logging.info(f"{'─' * 70}")
+            
+            # Step 1: Capture image
+            logging.info("Step 1/4: Capturing image...")
+            image = capture_image()
+            
+            if image is None:
+                logging.error("❌ Image capture failed - skipping cycle")
+                return False
+            
+            logging.info(f"✓ Image captured: {image.shape[1]}x{image.shape[0]} px, size: {image.nbytes / 1024:.1f} KB")
+            
+            # Step 2: Extract ROI using ArUco markers
+            logging.info("Step 2/4: Extracting ROI...")
+            roi = extract_roi(image)
+            
+            if roi is not None:
+                upload_image = roi
+                roi_status = f"{roi.shape[1]}x{roi.shape[0]} px (ArUco detected)"
+                logging.info(f"✓ ROI extracted: {roi_status}")
+            else:
+                upload_image = image
+                roi_status = "Using full image (ArUco not detected)"
+                logging.warning(f"⚠️  {roi_status}")
+            
+            # Step 3: Save image locally
+            filename = f"{self.device_id}_{timestamp}.jpg"
+            filepath = self.output_dir / filename
+            
+            cv2.imwrite(
+                str(filepath), 
+                upload_image, 
+                [cv2.IMWRITE_JPEG_QUALITY, config.JPEG_QUALITY]
+            )
+            
+            file_size = filepath.stat().st_size / 1024  # KB
+            logging.info(f"✓ Image saved: {filename} ({file_size:.1f} KB)")
+            
+            # Step 4: Upload to Google Drive (with retry and verification)
+            logging.info("Step 3/4: Uploading to Google Drive...")
+            drive_success = self.drive.upload_with_verification(
+                str(filepath), 
+                self.gdrive_folder_id
+            )
+            
+            if drive_success:
+                logging.info("✓ Google Drive upload successful")
+            else:
+                logging.error("❌ Google Drive upload failed after retries")
+            
+            # Step 5: Upload to Telegram (with retry)
+            logging.info("Step 4/4: Uploading to Telegram...")
+            caption = (
+                f"🔍 Device: {self.device_id}\n"
+                f"📅 Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+                f"📐 Image: {roi_status}\n"
+                f"💾 Size: {file_size:.1f} KB"
+            )
+            
+            telegram_success = self.telegram.upload_telegram_with_retry(
+                str(filepath), 
+                caption
+            )
+            
+            if telegram_success:
+                logging.info("✓ Telegram upload successful")
+            else:
+                logging.error("❌ Telegram upload failed after retries")
+            
+            # Report cycle results
+            cycle_time = time.time() - cycle_start
+            
+            if drive_success and telegram_success:
+                logging.info(f"{'─' * 70}")
+                logging.info(f"✅ CYCLE COMPLETE - All uploads successful")
+                logging.info(f"⏱️  Duration: {cycle_time:.1f}s")
+                logging.info(f"{'─' * 70}\n")
+                return True
+            else:
+                logging.warning(f"{'─' * 70}")
+                logging.warning(f"⚠️  CYCLE COMPLETE - Some uploads failed")
+                logging.warning(f"   Google Drive: {'✓' if drive_success else '✗'}")
+                logging.warning(f"   Telegram: {'✓' if telegram_success else '✗'}")
+                logging.warning(f"⏱️  Duration: {cycle_time:.1f}s")
+                logging.warning(f"{'─' * 70}\n")
+                return False
         
-        for attempt in range(self.max_retries + 1):
-            try:
-                image = self.capture.capture_image()
-                
-                if image is None:
-                    continue
-                
-                roi = self.roi_extractor.extract_roi(image, 
-                                                     fallback_points=config.FALLBACK_ROI_POINTS)
-                
-                if roi is None:
-                    continue
-                
-                digit_rois = self.preprocessor.process(roi)
-                
-                if not digit_rois:
-                    continue
-                
-                reading, confidence = self.classifier.classify_digits(digit_rois)
-                
-                if reading is not None:
-                    break
-                
-            except Exception as e:
-                self._log_error(f"Cycle attempt {attempt + 1} failed: {str(e)}")
-                time.sleep(1)
-        
-        if reading is None:
-            self._log_error("All attempts failed, skipping cycle")
-            gc.collect()
-            return
-        
-        last_reading = self.state_manager.get_last_reading()
-        last_timestamp = self.state_manager.get_last_timestamp()
-        
-        validated_reading, flow_rate = self.validator.validate_and_correct(
-            reading, last_reading, last_timestamp, current_timestamp
-        )
-        
-        if validated_reading is None:
-            self._log_error("Validation failed, skipping upload")
-            gc.collect()
-            return
-        
-        self.state_manager.save_state(
-            reading=validated_reading,
-            timestamp=current_timestamp,
-            flow_rate=flow_rate
-        )
-        
-        # Dynamic cloud uploads based on credential flags
-        if self.enable_thingspeak:
-            self.uploader.send_thingspeak(validated_reading, flow_rate)
-        
-        if self.enable_telegram:
-            self.uploader.send_telegram(image, validated_reading, flow_rate)
-        
-        if self.enable_gdrive:
-            # Save image temporarily for rclone upload
-            try:
-                timestamp = int(time.time())
-                temp_path = f"/tmp/meter_{self.device_id}_{timestamp}.jpg"
-                cv2.imwrite(temp_path, image, [cv2.IMWRITE_JPEG_QUALITY, 85])
-                
-                # Upload via rclone
-                upload_success = self.rclone_uploader.upload_image(
-                    temp_path,
-                    self.gdrive_folder_id
-                )
-                
-                # Clean up temp file
-                try:
-                    os.remove(temp_path)
-                except:
-                    pass
-                    
-                if not upload_success:
-                    self._log_error("Google Drive upload failed")
-            except Exception as e:
-                self._log_error(f"Google Drive upload exception: {str(e)}")
-        
-        elapsed = time.time() - start_time
-        
-        gc.collect()
+        except Exception as e:
+            logging.error(f"❌ CYCLE FAILED: {e}")
+            logging.error(traceback.format_exc())
+            return False
     
     def run(self):
-        self._log_error(f"Service started - Device: {self.device_id} ({self.node_name})")
+        """Run service loop with automatic retry."""
+        cycle_count = 0
+        success_count = 0
         
-        try:
-            while True:
-                next_cycle = datetime.now() + timedelta(seconds=self.interval)
+        logging.info("🚀 Service loop starting...")
+        logging.info(f"⏱️  Capture interval: {config.CAPTURE_INTERVAL_MINUTES} minutes\n")
+        
+        while True:
+            try:
+                cycle_count += 1
+                success_rate = (success_count / max(1, cycle_count - 1)) * 100 if cycle_count > 1 else 0
                 
-                self.process_cycle()
+                logging.info(f"\n{'═' * 70}")
+                logging.info(f"CYCLE #{cycle_count} - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+                if cycle_count > 1:
+                    logging.info(f"Success Rate: {success_count}/{cycle_count - 1} ({success_rate:.1f}%)")
+                logging.info(f"{'═' * 70}")
                 
-                now = datetime.now()
-                if now < next_cycle:
-                    sleep_duration = (next_cycle - now).total_seconds()
-                    time.sleep(sleep_duration)
+                success = self.process_cycle()
+                if success:
+                    success_count += 1
                 
-        except KeyboardInterrupt:
-            self._log_error("Service stopped by user")
-            self.capture.cleanup()
-            sys.exit(0)
-        except Exception as e:
-            self._log_error(f"Fatal error: {str(e)}")
-            self.capture.cleanup()
-            sys.exit(1)
+                # Clean up old images (keep last 50)
+                self._cleanup_old_images(keep_count=50)
+                
+                # Wait for next cycle
+                logging.info(f"⏳ Next cycle in {config.CAPTURE_INTERVAL_MINUTES} minutes...")
+                time.sleep(self.capture_interval)
+            
+            except KeyboardInterrupt:
+                logging.info("\n🛑 Service stopped by user")
+                break
+            except Exception as e:
+                logging.error(f"❌ Service error: {e}")
+                logging.error(traceback.format_exc())
+                logging.info("⏳ Waiting 60 seconds before retry...")
+                time.sleep(60)  # Wait 1 minute before retry
     
-    def _log_error(self, message):
+    def _cleanup_old_images(self, keep_count=50):
+        """Remove old images, keeping only the most recent ones."""
         try:
-            with open(config.ERROR_LOG, 'a') as f:
-                f.write(f"{datetime.now()} - {message}\n")
-        except:
-            pass
+            images = sorted(self.output_dir.glob("*.jpg"), key=lambda p: p.stat().st_mtime, reverse=True)
+            
+            if len(images) > keep_count:
+                for old_image in images[keep_count:]:
+                    old_image.unlink()
+                    logging.info(f"🗑️  Cleaned up old image: {old_image.name}")
+        except Exception as e:
+            logging.warning(f"⚠️  Cleanup failed: {e}")
 
-if __name__ == '__main__':
-    service = MeterReaderService()
-    service.run()
+if __name__ == "__main__":
+    try:
+        service = ImageCaptureService()
+        service.run()
+    except Exception as e:
+        logging.error(f"❌ FATAL ERROR: {e}")
+        logging.error(traceback.format_exc())
+        sys.exit(1)

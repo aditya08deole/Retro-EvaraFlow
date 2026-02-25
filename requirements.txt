@@ -12,7 +12,8 @@ picamera==1.13                      # PiCamera interface (legacy stack)
 numpy==1.19.5                       # Array operations (required by OpenCV)
 
 # Computer Vision (ArUco marker detection and ROI extraction)
-opencv-contrib-python-headless==4.5.3.56  # OpenCV with ArUco support, no GUI
+# We use >=4.1.0.25 to securely find an armv6l headless wheel on piwheels with compiled aruco modules
+opencv-contrib-python-headless>=4.1.0.25
 
 # GPIO Control
 RPi.GPIO==0.7.1                     # LED/relay control

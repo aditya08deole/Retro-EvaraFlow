@@ -135,10 +135,11 @@ echo "  Installing/updating packages from requirements.txt..."
 if [ "$RPI_MODEL" = "Zero W" ]; then
     echo "  ⏳ Note: Installation may take 5-10 minutes..."
     echo "     (opencv-contrib requires compilation)"
-fi
-
 # Uninstall all potentially conflicting OpenCV dependencies to prevent missing 'cv2.aruco'
 echo "  🧹 Cleaning up any conflicting OpenCV installations..."
+# 1. Remove the OS-level version which lacks ArUco
+sudo apt-get remove -y python3-opencv > /dev/null 2>&1
+# 2. Remove any pip-installed versions
 sudo pip3 uninstall -y opencv-python opencv-contrib-python opencv-python-headless opencv-contrib-python-headless 2>/dev/null
 
 # Install with proper flags for ARM compatibility

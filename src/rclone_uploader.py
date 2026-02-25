@@ -58,7 +58,7 @@ class RcloneUploader:
                 ['rclone', 'version'],
                 capture_output=True,
                 text=True,
-                timeout=5
+                timeout=15
             )
             
             if version_result.returncode == 0:
@@ -70,7 +70,7 @@ class RcloneUploader:
                 ['rclone', 'listremotes'],
                 capture_output=True,
                 text=True,
-                timeout=5
+                timeout=15
             )
             
             if result.returncode != 0:

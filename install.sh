@@ -137,6 +137,10 @@ if [ "$RPI_MODEL" = "Zero W" ]; then
     echo "     (opencv-contrib requires compilation)"
 fi
 
+# Uninstall all potentially conflicting OpenCV dependencies to prevent missing 'cv2.aruco'
+echo "  🧹 Cleaning up any conflicting OpenCV installations..."
+sudo pip3 uninstall -y opencv-python opencv-contrib-python opencv-python-headless opencv-contrib-python-headless 2>/dev/null
+
 # Install with proper flags for ARM compatibility
 sudo pip3 install --no-cache-dir -r requirements.txt
 

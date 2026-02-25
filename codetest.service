@@ -24,9 +24,8 @@ ExecStart=/usr/bin/python3 /home/pi/Desktop/Evaratech/Evaraflow/main_service.py
 Restart=always
 RestartSec=30
 
-# Logging
-StandardOutput=append:/home/pi/Desktop/Evaratech/Evaraflow/error.log
-StandardError=append:/home/pi/Desktop/Evaratech/Evaraflow/error.log
+# Logging is handled natively by the Python logging module writing to error.log
+# and journalctl capturing standard output.
 
 [Install]
 WantedBy=multi-user.target

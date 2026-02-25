@@ -15,6 +15,10 @@ NO HARDCODED CREDENTIALS IN THIS FILE!
 # GPIO Pin for LED/Relay Control
 LED_PIN = 23
 
+# LED Logic Inversion
+# Set to True if using a Relay Module or transistor that turns ON when GPIO is LOW
+LED_ACTIVE_LOW = False
+
 # Camera Resolution (Max for PiCamera v2.1)
 CAMERA_RESOLUTION = (1640, 1232)  # Width x Height in pixels
 

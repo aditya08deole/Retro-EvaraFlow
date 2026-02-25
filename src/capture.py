@@ -51,6 +51,15 @@ def _get_led_pin():
     return _LED_PIN
 
 
+def _is_active_low():
+    """Check if LED logic is inverted."""
+    try:
+        import config
+        return getattr(config, 'LED_ACTIVE_LOW', False)
+    except Exception:
+        return False
+
+
 def _init_gpio():
     """Initialize GPIO if not already initialized."""
     global GPIO_INITIALIZED
@@ -60,20 +69,24 @@ def _init_gpio():
         led_pin = _get_led_pin()
         GPIO.setmode(GPIO.BCM)
         GPIO.setup(led_pin, GPIO.OUT)
-        GPIO.output(led_pin, GPIO.LOW)
+        # Default state is OFF
+        initial_state = GPIO.HIGH if _is_active_low() else GPIO.LOW
+        GPIO.output(led_pin, initial_state)
         GPIO_INITIALIZED = True
 
 
 def _led_on():
     """Turn LED/relay ON."""
     if HAS_GPIO:
-        GPIO.output(_get_led_pin(), GPIO.HIGH)
+        state = GPIO.LOW if _is_active_low() else GPIO.HIGH
+        GPIO.output(_get_led_pin(), state)
 
 
 def _led_off():
     """Turn LED/relay OFF."""
     if HAS_GPIO:
-        GPIO.output(_get_led_pin(), GPIO.LOW)
+        state = GPIO.HIGH if _is_active_low() else GPIO.LOW
+        GPIO.output(_get_led_pin(), state)
 
 
 def _capture_with_picamera2(resolution, rotation, jpeg_quality):

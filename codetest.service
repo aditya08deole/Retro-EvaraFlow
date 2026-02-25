@@ -1,5 +1,5 @@
 [Unit]
-Description=RetroFit Image Capture Service v2.0
+Description=RetroFit Image Capture Service v2.1
 After=network-online.target
 Wants=network-online.target
 

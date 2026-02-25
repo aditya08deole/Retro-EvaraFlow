@@ -1,5 +1,5 @@
 """
-RetroFit Image Capture Service v2.0 - Configuration
+RetroFit Image Capture Service v2.1 - Configuration
 Cloud Processing Architecture (No Edge ML)
 
 Device-specific credentials loaded from credentials_store.csv
@@ -27,7 +27,7 @@ FOCUS_DELAY = 3.0         # Focus adjustment time (camera active, LED ON)
 POST_CAPTURE_DELAY = 3.0  # Keep LED ON after capture before turning OFF
 
 # Image Quality
-JPEG_QUALITY = 95  # 1-100, higher = better quality but larger file size
+JPEG_QUALITY = 85  # 1-100, 85 gives ~40% smaller files vs 95, no visual diff for meter reading
 
 
 # ============================================================
@@ -55,6 +55,22 @@ UPLOAD_TIMEOUT = 120  # Maximum time for single upload attempt (seconds)
 
 # rclone Configuration
 RCLONE_REMOTE_NAME = "gdrive"  # Must match 'rclone config' remote name
+
+
+# ============================================================
+# THINGSPEAK STATUS REPORTING
+# ============================================================
+
+# ThingSpeak API URL
+THINGSPEAK_UPDATE_URL = "https://api.thingspeak.com/update"
+
+# Status codes sent to ThingSpeak field1 after each cycle:
+#   1 = ArUco ROI detected, cropped image uploaded to GDrive successfully
+#   0 = ArUco NOT detected, full image uploaded to GDrive successfully
+#   2 = Error (capture failed, upload failed, or any other error)
+THINGSPEAK_STATUS_ARUCO_SUCCESS = 1
+THINGSPEAK_STATUS_NO_ARUCO = 0
+THINGSPEAK_STATUS_ERROR = 2
 
 
 # ============================================================
@@ -126,9 +142,16 @@ def validate_config():
     if LOG_LEVEL not in ["DEBUG", "INFO", "WARNING", "ERROR"]:
         errors.append("LOG_LEVEL must be one of: DEBUG, INFO, WARNING, ERROR")
     
+    # ArUco settings
+    if not isinstance(ARUCO_MARKER_IDS, list) or len(ARUCO_MARKER_IDS) < 3:
+        errors.append("ARUCO_MARKER_IDS must be a list with at least 3 marker IDs")
+    
+    if not (0 <= ROI_PADDING_PERCENT <= 50):
+        errors.append("ROI_PADDING_PERCENT must be between 0 and 50")
+    
     # Raise error if any validation failed
     if errors:
-        raise ValueError("Configuration validation failed:\\n  - " + "\\n  - ".join(errors))
+        raise ValueError("Configuration validation failed:\n  - " + "\n  - ".join(errors))
 
 
 # ============================================================

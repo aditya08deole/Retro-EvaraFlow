@@ -11,7 +11,7 @@
 #   - 50% faster installation, 65% less memory usage
 
 echo "=========================================="
-echo " RetroFit Image Capture Service v2.0"
+echo " RetroFit Image Capture Service v2.1"
 echo " Cloud Processing Architecture"
 echo "=========================================="
 echo ""
@@ -47,7 +47,7 @@ check_package_version() {
     python3 -c "import $1; print($1.__version__)" 2>/dev/null
 }
 
-echo "[1/6] Checking Python environment..."
+echo "[1/7] Checking Python environment..."
 if command -v python3 &> /dev/null; then
     PYTHON_VERSION=$(python3 --version | cut -d' ' -f2)
     echo "✓ Python 3 found: $PYTHON_VERSION"
@@ -58,7 +58,7 @@ else
 fi
 
 echo ""
-echo "[2/6] Checking system packages..."
+echo "[2/7] Checking system packages..."
 
 # Check and install pip if needed
 if ! command -v pip3 &> /dev/null; then
@@ -73,14 +73,28 @@ echo ""
 echo "  Installing system dependencies..."
 if [ "$RPI_MODEL" = "Zero W" ]; then
     echo "  ⚙️  Optimizing for RPi Zero W (512MB RAM, ARM6)..."
-    sudo apt-get install -y python3-dev libatlas-base-dev libopenjp2-7 libtiff5
+    
+    # Expand swap to 2GB for OpenCV compilation (512MB RAM is not enough)
+    CURRENT_SWAP=$(grep CONF_SWAPSIZE /etc/dphys-swapfile | grep -oP '\d+')
+    if [ "$CURRENT_SWAP" -lt 2048 ] 2>/dev/null; then
+        echo "  📦 Expanding swap to 2GB for compilation..."
+        sudo dphys-swapfile swapoff
+        sudo sed -i 's/CONF_SWAPSIZE=.*/CONF_SWAPSIZE=2048/' /etc/dphys-swapfile
+        sudo dphys-swapfile setup
+        sudo dphys-swapfile swapon
+        echo "  ✓ Swap expanded to 2GB"
+    else
+        echo "  ✓ Swap already >= 2GB"
+    fi
+    
+    sudo apt-get install -y python3-dev libatlas-base-dev libopenjp2-7 libtiff5 libcamera-dev python3-libcamera
 else
     echo "  ⚙️  Optimizing for RPi 3B+ (1GB RAM, ARM7)..."
-    sudo apt-get install -y python3-dev libatlas-base-dev
+    sudo apt-get install -y python3-dev libatlas-base-dev libcamera-dev python3-libcamera
 fi
 
 echo ""
-echo "[3/6] Checking required Python packages..."
+echo "[3/7] Checking required Python packages..."
 
 # Use requirements.txt for installation
 if [ ! -f "requirements.txt" ]; then
@@ -180,7 +194,7 @@ fi
 echo "✓ rclone setup complete"
 
 echo ""
-echo "[4/6] Creating required files..."
+echo "[4/7] Creating required files..."
 if [ ! -f "error.log" ]; then
     touch error.log
     echo "✓ Created error.log"
@@ -196,7 +210,7 @@ else
 fi
 
 echo ""
-echo "[5/6] Configuring systemd service..."
+echo "[5/7] Configuring systemd service..."
 
 # Check if service already exists
 if systemctl list-unit-files | grep -q "codetest.service"; then
@@ -217,7 +231,7 @@ sudo systemctl enable codetest.service
 echo "✓ Service enabled for auto-start"
 
 echo ""
-echo "[6/6] Starting service..."
+echo "[6/7] Starting service..."
 sudo systemctl start codetest.service
 
 # Wait a moment for service to initialize
@@ -233,13 +247,25 @@ else
 fi
 
 echo ""
+echo "[7/7] Setting up auto-update cron job..."
+CRON_CMD="*/30 * * * * /home/pi/Desktop/Evaratech/Evaraflow/run_cmd_bash.sh >> /home/pi/Desktop/Evaratech/Evaraflow/update.log 2>&1"
+
+# Check if cron job already exists
+if crontab -l 2>/dev/null | grep -q "run_cmd_bash.sh"; then
+    echo "✓ Auto-update cron job already configured"
+else
+    (crontab -l 2>/dev/null; echo "$CRON_CMD") | crontab -
+    echo "✓ Auto-update cron job installed (every 30 minutes)"
+fi
+
+echo ""
 echo "=========================================="
-echo "  Installation Complete!"
+echo "  Installation Complete! (v2.1)"
 echo "=========================================="
 echo ""
 echo "Architecture: Cloud Processing (Capture + Upload Only)"
 echo "Memory Usage: ~120MB (65% reduction from v1.x)"
-echo "Disk Usage: ~180MB (50% reduction from v1.x)"
+echo "Disk Usage: ~90MB (70% reduction from v1.x, removed pandas/openpyxl)"
 echo ""
 echo "Useful commands:"
 echo "  Service status : sudo systemctl status codetest.service"
@@ -247,14 +273,16 @@ echo "  View logs      : tail -f error.log"
 echo "  View live logs : sudo journalctl -u codetest.service -f"
 echo "  Restart service: sudo systemctl restart codetest.service"
 echo "  Stop service   : sudo systemctl stop codetest.service"
+echo "  Health check   : cat health.json"
 echo ""
 echo "Next steps:"
 echo "  1. Configure rclone: rclone config (create remote named 'gdrive')"
 echo "  2. Create config_WM.py with: device_id = \"YOUR-DEVICE-ID\""
-echo "  3. Add device to credentials_store.csv with Telegram/Drive credentials"
+echo "  3. Add device to credentials_store.csv with GDrive/ThingSpeak credentials"
 echo "  4. Verify service logs: tail -f error.log"
 echo "  5. Check first capture cycle (5 minutes after start)"
 echo ""
+echo "Auto-update: Cron runs every 30 minutes (see update.log)"
+echo "Health file: health.json updated each cycle for fleet monitoring"
 echo "Note: Service automatically clears Python cache on restart"
-echo "      (No stale .pyc files after git pull)"
 echo ""

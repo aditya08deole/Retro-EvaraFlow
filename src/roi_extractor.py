@@ -37,19 +37,25 @@ def extract_roi(image):
         # Convert to grayscale for marker detection
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         
-        # Initialize ArUco detector
-        aruco_dict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
-        parameters = cv2.aruco.DetectorParameters()
-        
-        # Adjust detection parameters for better reliability
-        parameters.adaptiveThreshWinSizeMin = 3
-        parameters.adaptiveThreshWinSizeMax = 23
-        parameters.adaptiveThreshWinSizeStep = 10
-        
-        detector = cv2.aruco.ArucoDetector(aruco_dict, parameters)
-        
-        # Detect markers
-        corners, ids, _ = detector.detectMarkers(gray)
+        # Initialize ArUco detector (compatible with OpenCV 4.5.x AND 4.7+)
+        # OpenCV 4.7+ uses ArucoDetector class; 4.5.x uses module-level functions
+        try:
+            # Try new API first (OpenCV 4.7+)
+            aruco_dict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
+            parameters = cv2.aruco.DetectorParameters()
+            parameters.adaptiveThreshWinSizeMin = 3
+            parameters.adaptiveThreshWinSizeMax = 23
+            parameters.adaptiveThreshWinSizeStep = 10
+            detector = cv2.aruco.ArucoDetector(aruco_dict, parameters)
+            corners, ids, _ = detector.detectMarkers(gray)
+        except AttributeError:
+            # Fall back to legacy API (OpenCV 4.5.x and earlier)
+            aruco_dict = cv2.aruco.Dictionary_get(cv2.aruco.DICT_4X4_50)
+            parameters = cv2.aruco.DetectorParameters_create()
+            parameters.adaptiveThreshWinSizeMin = 3
+            parameters.adaptiveThreshWinSizeMax = 23
+            parameters.adaptiveThreshWinSizeStep = 10
+            corners, ids, _ = cv2.aruco.detectMarkers(gray, aruco_dict, parameters=parameters)
         
         if ids is None or len(ids) < 4:
             logging.warning(f"⚠️  ArUco markers not detected (found {len(ids) if ids is not None else 0}/4)")
@@ -87,8 +93,12 @@ def extract_roi(image):
         roi_width = int(max(x_coords) - min(x_coords))
         roi_height = int(max(y_coords) - min(y_coords))
         
-        # Add 10% padding around ROI
-        padding_percent = 0.1
+        # Add padding around ROI (configurable via config.ROI_PADDING_PERCENT)
+        try:
+            import config
+            padding_percent = config.ROI_PADDING_PERCENT / 100.0
+        except Exception:
+            padding_percent = 0.1  # Default 10%
         padding_w = int(roi_width * padding_percent)
         padding_h = int(roi_height * padding_percent)
         

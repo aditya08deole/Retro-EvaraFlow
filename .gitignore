@@ -25,6 +25,9 @@ config_WM.py
 # Runtime state
 meter_state.json
 error.log
+update.log
+health.json
+capture_output/
 
 # Captured images
 *.jpg
@@ -35,6 +38,7 @@ sheets/
 data/raw_images/
 
 # Credentials (keep template, ignore actual)
+credentials_store.csv
 service_account.json
 .credentials_local.xlsx
 rclone.conf

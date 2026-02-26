@@ -161,28 +161,54 @@ if [ "$RPI_MODEL" = "Zero W" ]; then
     echo "     (opencv-contrib requires compilation)"
 fi
 
-# ☢️ NUCLEAR CLEANSE: Delete all ghost folders that override ArUco
-echo "  ☢️  Executing Path Cleanse (Deleting Ghost OpenCV folders)..."
+# PHASE 1: COMPLETE PYTHON ENVIRONMENT PURGE
+echo "  ☢️  Executing Nuclear Environment Purge..."
 sudo apt-get remove -y python3-opencv > /dev/null 2>&1
 sudo pip3 uninstall -y opencv-python opencv-contrib-python opencv-python-headless opencv-contrib-python-headless 2>/dev/null
 
-# Surgical deletion of leftover system folders
+# Manual folder removal (Surgical Cleanse)
+echo "  🧹 Removing residual dist-packages folders..."
 sudo rm -rf /usr/lib/python3/dist-packages/cv2* 2>/dev/null
 sudo rm -rf /usr/lib/python3/dist-packages/opencv* 2>/dev/null
-sudo rm -rf /usr/local/lib/python3.*/dist-packages/cv2* 2>/dev/null
-sudo rm -rf /usr/local/lib/python3.*/dist-packages/opencv* 2>/dev/null
+sudo rm -rf /usr/local/lib/python3.7/dist-packages/cv2* 2>/dev/null
+sudo rm -rf /usr/local/lib/python3.7/dist-packages/opencv* 2>/dev/null
+sudo rm -rf /usr/local/lib/python3/dist-packages/cv2* 2>/dev/null
+sudo rm -rf /usr/local/lib/python3/dist-packages/opencv* 2>/dev/null
 
-# PHASE 2: CLEAN PYTHON ENVIRONMENT (Nuke Corrupted Cache)
-echo "  🧹 Purging pip cache to prevent hash mismatches..."
+# Purge pip cache fully for all users
+echo "  🧹 NUKING pip cache (Fixing SHA256 mismatches)..."
 sudo rm -rf /root/.cache/pip
 sudo rm -rf ~/.cache/pip
 python3 -m pip install --upgrade pip setuptools wheel > /dev/null 2>&1
 
-# PHASE 3: CORRECT OPENCV INSTALL STRATEGY
-echo "  📥 Installing Verified OpenCV Contrib Strategy (ARMv6 Safe)..."
-# We bypass PyPI hashes by explicitly enforcing the piwheels index and forcing reinstall
-sudo pip3 install --no-cache-dir --force-reinstall opencv-contrib-python-headless==4.5.1.48 \
-    --index-url https://www.piwheels.org/simple
+# Verify no cv2 remains
+if python3 -c "import cv2" 2>/dev/null; then
+    echo "  ❌ ERROR: Environment purge failed. cv2 still importable."
+    exit 1
+fi
+echo "  ✓ Environment successfully sanitized"
+
+# PHASE 2: DISABLE HASH ENFORCEMENT & NEUTRALIZE SHA256 BLOCKAGE
+# PHASE 3: CORRECT OPENCV INSTALL STRATEGY (ARMv6 SAFE)
+echo "  📥 Installing Verified OpenCV Contrib Strategy (4.5.1.48 / ARMv6)..."
+
+# Objective: Install without triggering the hash mismatch from requirements.txt
+# We download and install directly to be 100% deterministic
+WHEEL_URL="https://www.piwheels.org/simple/opencv-contrib-python-headless/opencv_contrib_python_headless-4.5.1.48-cp37-cp37m-linux_armv6l.whl"
+
+# Attempt direct install bypassing indexes first (most robust against hash mismatches)
+if sudo pip3 install --no-cache-dir "$WHEEL_URL"; then
+    echo "  ✓ OpenCV 4.5.1.48 installed via direct wheel link"
+else
+    echo "  ⚠️  Direct link failed, trying index override..."
+    sudo pip3 install --no-cache-dir --force-reinstall opencv-contrib-python-headless==4.5.1.48 \
+        --index-url https://www.piwheels.org/simple
+fi
+
+# PHASE 4: ARCHITECTURE & WHEEL VERIFICATION
+if [ ! -d "/usr/local/lib/python3.7/dist-packages/cv2" ] && [ ! -d "/usr/lib/python3/dist-packages/cv2" ]; then
+    echo "  ⚠️  Binary wheel might have failed. Checking system paths..."
+fi
 
 # Install all other standard dependencies normally
 sudo pip3 install --no-cache-dir -r requirements.txt
@@ -190,34 +216,85 @@ sudo pip3 install --no-cache-dir -r requirements.txt
 # Final Path Correction
 sudo ldconfig
 
-# PHASE 4: VERIFY ARUCO FUNCTIONALITY
-echo ""
-echo "🔍 Performing Smoke Test (Verifying OpenCV ArUco)..."
+# PHASE 5: SOURCE BUILD STRATEGY (FALLBACK)
+# This is only executed if the smoke test fails after wheel installation
+VERIFY_CV2="import cv2; import sys; sys.exit(0 if (hasattr(cv2, 'aruco') or hasattr(cv2.aruco, 'Dictionary')) else 1)"
 
-# Run precise diagnostic verification via Python
+if ! sudo python3 -c "$VERIFY_CV2" 2>/dev/null; then
+    echo "  ⚠️  Wheel installation missing ArUco! Pivoting to Source Build (Phase 5)..."
+    echo "  ⏳ This will take 2-4 hours on a Pi Zero. Please ensure power is stable."
+    
+    # 1. Install Build Dependencies
+    sudo apt-get install -y build-essential cmake pkg-config libjpeg-dev libtiff5-dev libjasper-dev libpng-dev \
+        libavcodec-dev libavformat-dev libswscale-dev libv4l-dev libxvidcore-dev libx264-dev \
+        libfontconfig1-dev libcairo2-dev libgdk-pixbuf2.0-dev libpango1.0-dev \
+        libgtk2.0-dev libgtk-3-dev libatlas-base-dev gfortran python3-dev
+    
+    # 2. Preparation
+    cd /tmp
+    rm -rf opencv opencv_contrib
+    git clone --depth 1 --branch 4.5.1 https://github.com/opencv/opencv.git
+    git clone --depth 1 --branch 4.5.1 https://github.com/opencv/opencv_contrib.git
+    
+    # 3. Build & Install
+    cd opencv
+    mkdir -p build && cd build
+    cmake -D CMAKE_BUILD_TYPE=RELEASE \
+          -D CMAKE_INSTALL_PREFIX=/usr/local \
+          -D OPENCV_EXTRA_MODULES_PATH=/tmp/opencv_contrib/modules \
+          -D ENABLE_NEON=OFF \
+          -D ENABLE_VFPV3=OFF \
+          -D BUILD_TESTS=OFF \
+          -D BUILD_EXAMPLES=OFF \
+          -D OPENCV_ENABLE_NONFREE=ON \
+          -D BUILD_opencv_aruco=ON \
+          -D PYTHON3_EXECUTABLE=$(which python3) \
+          -D BUILD_opencv_python3=ON ..
+    
+    make -j$(nproc)
+    sudo make install
+    sudo ldconfig
+    echo "  ✓ Source build complete"
+else
+    echo "  ✓ Pre-compiled wheel verified with ArUco support"
+fi
+
+# PHASE 6: FINAL VERIFICATION
+echo ""
+echo "🔍 Performing Final Smoke Test (Phase 6)..."
+
 VERIFY_SCRIPT="
 import sys
 try:
     import cv2
     print(f'✓ CV2 Version: {cv2.__version__}')
     if hasattr(cv2, 'aruco'):
-        print('✅ SUCCESS: OpenCV attribute ArUco is functional!')
+        print('✅ SUCCESS: ArUco (Attribute) verified!')
         sys.exit(0)
-    else:
-        # Check if it needs direct submodule import
-        import cv2.aruco
-        print('✅ SUCCESS: OpenCV submodule ArUco is functional!')
-        sys.exit(0)
+    import cv2.aruco
+    print('✅ SUCCESS: ArUco (Submodule) verified!')
+    sys.exit(0)
 except Exception as e:
     print(f'❌ ERROR: {e}')
     sys.exit(1)
 "
 
 if sudo python3 -c "$VERIFY_SCRIPT"; then
-    echo "✓ Package installation & Verification complete"
+    echo "  ✓ System operational"
 else
-    echo "❌ CRITICAL FAILURE: ArUco verification failed. Review pip3 logs."
+    echo "  ❌ CRITICAL: Final verification failed."
     exit 1
+fi
+
+# PHASE 7: SYSTEM INTEGRATION CHECK
+echo "[7/7] Restarting and verifying service integration..."
+sudo systemctl daemon-reload
+sudo systemctl restart codetest.service
+sleep 3
+if systemctl is-active --quiet codetest.service; then
+    echo "  ✓ Service integration: OK"
+else
+    echo "  ❌ Service failed to start. Check 'sudo journalctl -u codetest.service'"
 fi
 
 echo ""

@@ -12,8 +12,7 @@ picamera==1.13                      # PiCamera interface (legacy stack)
 numpy==1.19.5                       # Array operations (required by OpenCV)
 
 # Computer Vision (ArUco marker detection and ROI extraction)
-# (Installed explicitly in install.sh to bypass PyPI hash checks for PiWheels)
-# opencv-contrib-python-headless==4.1.1.26
+# (Handled by install.sh to bypass PyPI hash checks for ARMv6)
 
 # GPIO Control
 RPi.GPIO==0.7.1                     # LED/relay control

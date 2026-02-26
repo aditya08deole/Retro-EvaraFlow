@@ -83,14 +83,22 @@ if [ "$RPI_MODEL" = "Zero W" ]; then
         sudo dphys-swapfile setup
         sudo dphys-swapfile swapon
         echo "  ✓ Swap expanded to 2GB"
-    else
-        echo "  ✓ Swap already >= 2GB"
     fi
+
+    # Build tools for OpenCV (cmake is required if pip needs to build from source)
+    sudo apt-get install -y cmake pkg-config build-essential
     
-    sudo apt-get install -y python3-dev libatlas-base-dev libopenjp2-7 libtiff5 libcamera-dev python3-libcamera
+    # System dependencies for OpenCV
+    sudo apt-get install -y libatlas-base-dev libopenjp2-7 libtiff5 libjpeg-dev libpng-dev
+    
+    # libcamera dependencies (handling name changes between OS versions)
+    sudo apt-get install -y libcamera-dev python3-libcamera 2>/dev/null || \
+    echo "  ! python3-libcamera not found (common on older OS, skipping)"
 else
     echo "  ⚙️  Optimizing for RPi 3B+ (1GB RAM, ARM7)..."
-    sudo apt-get install -y python3-dev libatlas-base-dev libcamera-dev python3-libcamera
+    sudo apt-get install -y cmake pkg-config build-essential libatlas-base-dev
+    sudo apt-get install -y libcamera-dev python3-libcamera 2>/dev/null || \
+    echo "  ! python3-libcamera not found (skipping)"
 fi
 
 echo ""
@@ -149,7 +157,10 @@ sudo rm -rf /usr/local/lib/python3.*/dist-packages/cv2* 2>/dev/null
 sudo rm -rf /usr/local/lib/python3.*/dist-packages/opencv* 2>/dev/null
 
 # Install with proper flags for ARM compatibility
-sudo pip3 install --no-cache-dir -r requirements.txt
+# Use --extra-index-url to prioritize piwheels.org for pre-compiled binaries
+sudo pip3 install --no-cache-dir \
+    --extra-index-url https://www.piwheels.org/simple \
+    -r requirements.txt
 
 echo "✓ Package installation complete (50% faster than v1.x - no ML dependencies)"
 

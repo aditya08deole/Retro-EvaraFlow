@@ -38,7 +38,10 @@ def extract_roi(image):
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         
         # Initialize ArUco detector (compatible with OpenCV 4.5.x AND 4.7+)
-        # OpenCV 4.7+ uses ArucoDetector class; 4.5.x uses module-level functions
+        if not hasattr(cv2, 'aruco'):
+             logging.error("❌ Critical: 'cv2' module has no 'aruco' attribute. Installation is broken.")
+             return None
+
         try:
             # Try new API first (OpenCV 4.7+)
             aruco_dict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
@@ -50,6 +53,7 @@ def extract_roi(image):
             corners, ids, _ = detector.detectMarkers(gray)
         except AttributeError:
             # Fall back to legacy API (OpenCV 4.5.x and earlier)
+            logging.info("ℹ️ Using legacy ArUco API")
             aruco_dict = cv2.aruco.Dictionary_get(cv2.aruco.DICT_4X4_50)
             parameters = cv2.aruco.DetectorParameters_create()
             parameters.adaptiveThreshWinSizeMin = 3
@@ -58,6 +62,7 @@ def extract_roi(image):
             corners, ids, _ = cv2.aruco.detectMarkers(gray, aruco_dict, parameters=parameters)
         
         if ids is None or len(ids) < 4:
+            logging.warning(f"⚠️ ArUco detection failed: found {0 if ids is None else len(ids)}/4 markers")
             logging.warning(f"⚠️  ArUco markers not detected (found {len(ids) if ids is not None else 0}/4)")
             return None
         

@@ -86,6 +86,9 @@ if [ "$RPI_MODEL" = "Zero W" ]; then
         echo "  ✓ Swap expanded to 2GB"
     fi
 
+    # Refresh repo mirrors to fix 404 'Not Found' errors on older OS versions
+    sudo apt-get update --fix-missing
+    
     # Build tools & Hardware Acceleration (CRITICAL for ArUco on ARMv6)
     sudo apt-get install -y cmake pkg-config build-essential libatlas-base-dev
     sudo apt-get install -y libopenjp2-7 libtiff5 libjpeg-dev libpng-dev libjasper-dev libgst7 libgl1-mesa-glx
@@ -158,11 +161,13 @@ sudo rm -rf /usr/lib/python3/dist-packages/opencv* 2>/dev/null
 sudo rm -rf /usr/local/lib/python3.*/dist-packages/cv2* 2>/dev/null
 sudo rm -rf /usr/local/lib/python3.*/dist-packages/opencv* 2>/dev/null
 
-# Install the correct version using the official Pi mirror
-echo "  📥 Installing Verified OpenCV Contrib..."
-sudo pip3 install --no-cache-dir \
-    --extra-index-url https://www.piwheels.org/simple \
-    -r requirements.txt
+# Install OpenCV separately using ONLY PiWheels to bypass PyPI pip hash mismatch errors
+echo "  📥 Installing Verified OpenCV Contrib (Bypassing PyPI hash checks)..."
+sudo pip3 install --no-cache-dir opencv-contrib-python-headless==4.1.1.26 \
+    --index-url https://www.piwheels.org/simple
+
+# Install all other standard dependencies normally
+sudo pip3 install --no-cache-dir -r requirements.txt
 
 # Final Path Correction
 sudo ldconfig

@@ -53,7 +53,8 @@ if command -v python3 &> /dev/null; then
     echo "✓ Python 3 found: $PYTHON_VERSION"
 else
     echo "✗ Python 3 not found. Installing..."
-    sudo apt-get update
+    # Fix stale repo references that cause 404s
+    sudo apt-get update --allow-releaseinfo-change
     sudo apt-get install -y python3 python3-pip
 fi
 
@@ -85,13 +86,14 @@ if [ "$RPI_MODEL" = "Zero W" ]; then
         echo "  ✓ Swap expanded to 2GB"
     fi
 
-    # Build tools for OpenCV (cmake is required if pip needs to build from source)
-    sudo apt-get install -y cmake pkg-config build-essential
+    # Build tools & Hardware Acceleration (CRITICAL for ArUco on ARMv6)
+    sudo apt-get install -y cmake pkg-config build-essential libatlas-base-dev
+    sudo apt-get install -y libopenjp2-7 libtiff5 libjpeg-dev libpng-dev libjasper-dev libgst7 libgl1-mesa-glx
     
-    # System dependencies for OpenCV
-    sudo apt-get install -y libatlas-base-dev libopenjp2-7 libtiff5 libjpeg-dev libpng-dev
+    # 🧪 Expert Step: Ensure pip build tools are latest
+    sudo pip3 install --upgrade pip setuptools wheel
     
-    # libcamera dependencies (handling name changes between OS versions)
+    # libcamera dependencies
     sudo apt-get install -y libcamera-dev python3-libcamera 2>/dev/null || \
     echo "  ! python3-libcamera not found (common on older OS, skipping)"
 else
@@ -145,24 +147,37 @@ if [ "$RPI_MODEL" = "Zero W" ]; then
     echo "     (opencv-contrib requires compilation)"
 fi
 
-# Uninstall all potentially conflicting OpenCV dependencies to prevent missing 'cv2.aruco'
-echo "  🧹 Cleaning up corrupted OpenCV installations from armv6l cache..."
-# 1. Remove the OS-level version which lacks ArUco
+# ☢️ NUCLEAR CLEANSE: Delete all ghost folders that override ArUco
+echo "  ☢️  Executing Path Cleanse (Deleting Ghost OpenCV folders)..."
 sudo apt-get remove -y python3-opencv > /dev/null 2>&1
-# 2. Remove any pip-installed versions
 sudo pip3 uninstall -y opencv-python opencv-contrib-python opencv-python-headless opencv-contrib-python-headless 2>/dev/null
-# 3. Aggressive Surgical Strike: Manually delete broken cv2 package folders that pip / apt fail to clean up
+
+# Surgical deletion of leftover system folders
 sudo rm -rf /usr/lib/python3/dist-packages/cv2* 2>/dev/null
+sudo rm -rf /usr/lib/python3/dist-packages/opencv* 2>/dev/null
 sudo rm -rf /usr/local/lib/python3.*/dist-packages/cv2* 2>/dev/null
 sudo rm -rf /usr/local/lib/python3.*/dist-packages/opencv* 2>/dev/null
 
-# Install with proper flags for ARM compatibility
-# Use --extra-index-url to prioritize piwheels.org for pre-compiled binaries
+# Install the correct version using the official Pi mirror
+echo "  📥 Installing Verified OpenCV Contrib..."
 sudo pip3 install --no-cache-dir \
     --extra-index-url https://www.piwheels.org/simple \
     -r requirements.txt
 
-echo "✓ Package installation complete (50% faster than v1.x - no ML dependencies)"
+# Final Path Correction
+sudo ldconfig
+
+echo ""
+echo "🔍 Performing Smoke Test (Verifying OpenCV ArUco)..."
+if python3 -c "import cv2; import cv2.aruco; print('✓ ArUco Submodule: OK')" 2>/dev/null; then
+    echo "✅ SUCCESS: OpenCV with ArUco is functional!"
+elif python3 -c "import cv2; print(cv2.aruco); print('✓ ArUco Attribute: OK')" 2>/dev/null; then
+    echo "✅ SUCCESS: OpenCV attribute ArUco is functional!"
+else
+    echo "❌ ERROR: ArUco still missing. Try running: sudo pip3 install --force-reinstall opencv-contrib-python-headless==4.5.1.48"
+fi
+
+echo "✓ Package installation complete"
 
 echo ""
 echo "========================================"

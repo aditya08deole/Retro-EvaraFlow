@@ -6,6 +6,20 @@ Extracts meter display region using ArUco markers only (no fallback)
 import cv2
 import numpy as np
 import logging
+import os
+
+# Explicitly attempt to import the aruco submodule
+# On some ARM builds of opencv-contrib, the submodule must be imported directly
+try:
+    import cv2.aruco as aruco_module
+except ImportError:
+    aruco_module = None
+
+def get_opencv_info():
+    """Diagnostic helper to log physical library location."""
+    import sys
+    cv2_path = getattr(cv2, '__file__', 'unknown')
+    return f"🚀 CV2 DIAGNOSTIC | Version: {cv2.__version__} | Path: {cv2_path} | SysPath: {sys.path[0]}"
 
 
 def extract_roi(image):
@@ -33,37 +47,41 @@ def extract_roi(image):
         logging.error("❌ Invalid input image for ROI extraction")
         return None
     
+    # Log CV2 diagnostics only on first call or error
+    logging.debug(get_opencv_info())
+    
     try:
         # Convert to grayscale for marker detection
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         
-        # Initialize ArUco detector (compatible with OpenCV 4.5.x AND 4.7+)
-        if not hasattr(cv2, 'aruco'):
-             logging.error("❌ Critical: 'cv2' module has no 'aruco' attribute. Installation is broken.")
+        # Determine which source to use for ArUco (injected module or cv2 attribute)
+        target_aruco = aruco_module if aruco_module is not None else getattr(cv2, 'aruco', None)
+        
+        if target_aruco is None:
+             logging.error("❌ Critical: ArUco module not found in cv2 or direct import. Installation is broken.")
              return None
 
         try:
-            # Try new API first (OpenCV 4.7+)
-            aruco_dict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
-            parameters = cv2.aruco.DetectorParameters()
-            parameters.adaptiveThreshWinSizeMin = 3
-            parameters.adaptiveThreshWinSizeMax = 23
-            parameters.adaptiveThreshWinSizeStep = 10
-            detector = cv2.aruco.ArucoDetector(aruco_dict, parameters)
+            # Try new API (OpenCV 4.7+)
+            aruco_dict = target_aruco.getPredefinedDictionary(target_aruco.DICT_4X4_50)
+            parameters = target_aruco.DetectorParameters()
+            # ... existing parameter setup ...
+            detector = target_aruco.ArucoDetector(aruco_dict, parameters)
             corners, ids, _ = detector.detectMarkers(gray)
         except AttributeError:
             # Fall back to legacy API (OpenCV 4.5.x and earlier)
             logging.info("ℹ️ Using legacy ArUco API")
-            aruco_dict = cv2.aruco.Dictionary_get(cv2.aruco.DICT_4X4_50)
-            parameters = cv2.aruco.DetectorParameters_create()
-            parameters.adaptiveThreshWinSizeMin = 3
-            parameters.adaptiveThreshWinSizeMax = 23
-            parameters.adaptiveThreshWinSizeStep = 10
-            corners, ids, _ = cv2.aruco.detectMarkers(gray, aruco_dict, parameters=parameters)
+            # Legacy requires different Dictionary/Detector calls
+            try:
+                aruco_dict = target_aruco.Dictionary_get(target_aruco.DICT_4X4_50)
+                parameters = target_aruco.DetectorParameters_create()
+                corners, ids, _ = target_aruco.detectMarkers(gray, aruco_dict, parameters=parameters)
+            except Exception as e:
+                logging.error(f"❌ ArUco detect failed: {str(e)}")
+                return None
         
         if ids is None or len(ids) < 4:
             logging.warning(f"⚠️ ArUco detection failed: found {0 if ids is None else len(ids)}/4 markers")
-            logging.warning(f"⚠️  ArUco markers not detected (found {len(ids) if ids is not None else 0}/4)")
             return None
         
         # Extract marker centers

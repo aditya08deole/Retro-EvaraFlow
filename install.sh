@@ -61,6 +61,17 @@ fi
 echo ""
 echo "[2/7] Checking system packages..."
 
+# PHASE 1: SYSTEM REPOSITORY REPAIR (Buster EOL Fix)
+echo "  🔧 Repairing deprecated Buster repositories (Fixing 404s)..."
+# Replace old raspbian URL with legacy archive
+sudo sed -i 's/raspbian.raspberrypi.org/legacy.raspbian.org/g' /etc/apt/sources.list 2>/dev/null
+# Clean apt cache and allow release info changes since Buster moved to oldoldstable
+sudo apt-get clean
+sudo apt-get update --allow-releaseinfo-change -y > /dev/null 2>&1
+# Fix broken installs and update missing packages
+sudo apt-get --fix-broken install -y > /dev/null 2>&1
+sudo apt-get update --fix-missing -y > /dev/null 2>&1
+
 # Check and install pip if needed
 if ! command -v pip3 &> /dev/null; then
     echo "  Installing pip3..."
@@ -86,7 +97,7 @@ if [ "$RPI_MODEL" = "Zero W" ]; then
         echo "  ✓ Swap expanded to 2GB"
     fi
 
-    # Refresh repo mirrors to fix 404 'Not Found' errors on older OS versions
+    # Refresh repos again to be safe
     sudo apt-get update --fix-missing
     
     # Build tools & Hardware Acceleration (CRITICAL for ArUco on ARMv6)
@@ -161,9 +172,16 @@ sudo rm -rf /usr/lib/python3/dist-packages/opencv* 2>/dev/null
 sudo rm -rf /usr/local/lib/python3.*/dist-packages/cv2* 2>/dev/null
 sudo rm -rf /usr/local/lib/python3.*/dist-packages/opencv* 2>/dev/null
 
-# Install OpenCV separately using ONLY PiWheels to bypass PyPI pip hash mismatch errors
-echo "  📥 Installing Verified OpenCV Contrib (Bypassing PyPI hash checks)..."
-sudo pip3 install --no-cache-dir opencv-contrib-python-headless==4.1.1.26 \
+# PHASE 2: CLEAN PYTHON ENVIRONMENT (Nuke Corrupted Cache)
+echo "  🧹 Purging pip cache to prevent hash mismatches..."
+sudo rm -rf /root/.cache/pip
+sudo rm -rf ~/.cache/pip
+python3 -m pip install --upgrade pip setuptools wheel > /dev/null 2>&1
+
+# PHASE 3: CORRECT OPENCV INSTALL STRATEGY
+echo "  📥 Installing Verified OpenCV Contrib Strategy (ARMv6 Safe)..."
+# We bypass PyPI hashes by explicitly enforcing the piwheels index and forcing reinstall
+sudo pip3 install --no-cache-dir --force-reinstall opencv-contrib-python-headless==4.5.1.48 \
     --index-url https://www.piwheels.org/simple
 
 # Install all other standard dependencies normally
@@ -172,17 +190,35 @@ sudo pip3 install --no-cache-dir -r requirements.txt
 # Final Path Correction
 sudo ldconfig
 
+# PHASE 4: VERIFY ARUCO FUNCTIONALITY
 echo ""
 echo "🔍 Performing Smoke Test (Verifying OpenCV ArUco)..."
-if python3 -c "import cv2; import cv2.aruco; print('✓ ArUco Submodule: OK')" 2>/dev/null; then
-    echo "✅ SUCCESS: OpenCV with ArUco is functional!"
-elif python3 -c "import cv2; print(cv2.aruco); print('✓ ArUco Attribute: OK')" 2>/dev/null; then
-    echo "✅ SUCCESS: OpenCV attribute ArUco is functional!"
-else
-    echo "❌ ERROR: ArUco still missing. Try running: sudo pip3 install --force-reinstall opencv-contrib-python-headless==4.5.1.48"
-fi
 
-echo "✓ Package installation complete"
+# Run precise diagnostic verification via Python
+VERIFY_SCRIPT="
+import sys
+try:
+    import cv2
+    print(f'✓ CV2 Version: {cv2.__version__}')
+    if hasattr(cv2, 'aruco'):
+        print('✅ SUCCESS: OpenCV attribute ArUco is functional!')
+        sys.exit(0)
+    else:
+        # Check if it needs direct submodule import
+        import cv2.aruco
+        print('✅ SUCCESS: OpenCV submodule ArUco is functional!')
+        sys.exit(0)
+except Exception as e:
+    print(f'❌ ERROR: {e}')
+    sys.exit(1)
+"
+
+if sudo python3 -c "$VERIFY_SCRIPT"; then
+    echo "✓ Package installation & Verification complete"
+else
+    echo "❌ CRITICAL FAILURE: ArUco verification failed. Review pip3 logs."
+    exit 1
+fi
 
 echo ""
 echo "========================================"

@@ -195,6 +195,10 @@ VENV_PIP="$VENV_DIR/bin/pip"
 # Hardened pip version for Python 3.7
 TARGET_PIP_VER="23.0.1"
 export PIP_DISABLE_PIP_VERSION_CHECK=1
+unset PIP_REQUIRE_HASHES || true
+# Bypass global /etc/pip.conf to prevent piwheels index duplication and global config policies
+export PIP_CONFIG_FILE=/dev/null 
+
 log_info "Enforcing pip stable version $TARGET_PIP_VER..."
 "$VENV_PYTHON" -m pip install --upgrade "pip==$TARGET_PIP_VER" setuptools==59.6.0 wheel==0.37.1 > /dev/null 2>&1 || true
 log_ok "pip ready: $($VENV_PIP --version)"
@@ -203,6 +207,15 @@ log_ok "pip ready: $($VENV_PIP --version)"
 # PHASE 5: OpenCV Installation (Deterministic & Hardened)
 # ============================================================================
 log_info "=== PHASE 5: OpenCV Installation ==="
+
+# Pre-flight Diagnostics
+log_info "Dumping PIP Config & Requirements State..."
+echo "--- requirements.txt contents ---" >> "$LOG_FILE"
+cat requirements.txt >> "$LOG_FILE" 2>&1 || true
+echo "--- pip config list ---" >> "$LOG_FILE"
+"$VENV_PIP" config list >> "$LOG_FILE" 2>&1 || true
+echo "--- PIP_REQUIRE_HASHES environment ---" >> "$LOG_FILE"
+echo "${PIP_REQUIRE_HASHES:-Not Set}" >> "$LOG_FILE" 2>&1 || true
 
 # Sanitary purge
 log_info "Sanitizing environment..."

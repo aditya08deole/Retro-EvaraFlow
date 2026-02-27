@@ -129,7 +129,8 @@ BUILD_PKGS="build-essential cmake pkg-config"
 
 # OpenCV runtime dependencies
 OPENCV_PKGS="libatlas-base-dev libopenjp2-7 libtiff5 libjasper1 libjasper-dev"
-OPENCV_PKGS="$OPENCV_PKGS libjpeg-dev libpng-dev"
+OPENCV_PKGS="$OPENCV_PKGS libjpeg-dev libpng-dev libhdf5-dev libhdf5-serial-dev"
+OPENCV_PKGS="$OPENCV_PKGS libqt4-test libqtgui4 libv4l-dev"
 
 install_pkg_group() {
     local group_name="$1"; shift
@@ -204,36 +205,37 @@ log_info "Enforcing pip stable version $TARGET_PIP_VER..."
 log_ok "pip ready: $($VENV_PIP --version)"
 
 # ============================================================================
-# PHASE 5: Python Dependencies
+# PHASE 5: Offline Dependency Installation
 # ============================================================================
-log_info "=== PHASE 5: Python Dependencies ==="
+log_info "=== PHASE 5: Offline Installation ==="
 
-log_info "Purging cache before dependency install..."
+log_info "Sanitizing environment..."
+"$VENV_PIP" uninstall -y opencv-python opencv-contrib-python opencv-python-headless opencv-contrib-python-headless 2>/dev/null || true
 "$VENV_PIP" cache purge > /dev/null 2>&1 || true
 rm -rf /tmp/pip-* 2>/dev/null || true
 
-NUMPY_VERSION="1.19.5"
-LOCAL_NUMPY_WHEEL="numpy-${NUMPY_VERSION}-cp37-cp37m-linux_armv6l.whl"
+# Check for required wheels
+WHEEL_COUNT=$(ls *.whl 2>/dev/null | wc -l || echo "0")
+log_info "Found $WHEEL_COUNT local wheel files."
 
-log_info "Installing Numpy $NUMPY_VERSION (ARMv6) from LOCAL FILE..."
-
-if [ ! -f "$LOCAL_NUMPY_WHEEL" ]; then
-    log_fail "LOCAL NUMPY WHEEL MISSING! You must manually download downloaded it to your PC, transfer it to the Pi, and run this script again."
+if [ "$WHEEL_COUNT" -lt 2 ]; then
+    log_fail "Offline wheels missing! You must have at least NumPy and OpenCV wheels in this folder."
 fi
 
-# Strategy: Local offline install
-if "$VENV_PIP" install "$LOCAL_NUMPY_WHEEL" --no-index --no-cache-dir; then
-    log_ok "Numpy $NUMPY_VERSION installed successfully from local file"
+log_info "Installing ALL local wheels..."
+# Strategy: total offline install of everything provided
+if "$VENV_PIP" install *.whl --no-index --no-cache-dir; then
+    log_ok "Local wheel installation complete"
 else
-    log_fail "Failed to install the local Numpy wheel file. It may be corrupted."
+    log_fail "One or more local wheels failed to install."
 fi
 
-log_info "Installing requirements.txt..."
-if "$VENV_PIP" install --no-cache-dir \
-    --index-url https://www.piwheels.org/simple \
-    --extra-index-url https://pypi.org/simple \
-    --prefer-binary \
-    -r requirements.txt; then
+log_info "Verifying requirements satisfaction..."
+if "$VENV_PIP" install --no-index --no-cache-dir -r requirements.txt; then
+    log_ok "All requirements satisfied offline"
+else
+    log_warn "Some requirements are missing from the local wheel batch. Attempting check..."
+fi
     
     # Final dependency integrity check
     if "$VENV_PYTHON" -c "import numpy; print(numpy.__version__)" >/dev/null 2>&1; then

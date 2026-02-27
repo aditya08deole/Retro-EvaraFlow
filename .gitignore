@@ -6,6 +6,7 @@ __pycache__/
 .Python
 env/
 venv/
+.venv/
 *.egg-info/
 dist/
 build/
@@ -26,6 +27,7 @@ config_WM.py
 meter_state.json
 error.log
 update.log
+install.log
 health.json
 capture_output/
 

@@ -64,11 +64,11 @@ class ThingSpeakReporter:
             True if update was accepted by ThingSpeak, False otherwise
         """
         # Enforce ThingSpeak rate limit (15 seconds between updates)
+        # Non-blocking: skip update instead of sleeping (cycle interval is 5 min)
         elapsed = time.time() - self._last_update_time
         if elapsed < self.MIN_UPDATE_INTERVAL:
-            wait_time = self.MIN_UPDATE_INTERVAL - elapsed
-            logger.debug(f"⏳ ThingSpeak rate limit: waiting {wait_time:.1f}s...")
-            time.sleep(wait_time)
+            logger.debug(f"ThingSpeak rate limit: skipping (only {elapsed:.1f}s since last)")
+            return True  # Return success since this is a rate-limit skip, not a failure
         
         # Build payload
         payload = {

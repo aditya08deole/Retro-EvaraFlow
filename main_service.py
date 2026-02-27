@@ -39,14 +39,22 @@ from thingspeak_reporter import ThingSpeakReporter
 from credential_manager import load_from_config_wm, CredentialError
 import config
 
-# Configure logging with both file and console output
+from logging.handlers import RotatingFileHandler
+
+# Configure logging: RotatingFileHandler (2MB max, 2 backups = 6MB total)
+_file_handler = RotatingFileHandler(
+    config.ERROR_LOG,
+    maxBytes=2 * 1024 * 1024,  # 2MB
+    backupCount=2,
+)
+_file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+
+_stream_handler = logging.StreamHandler(sys.stdout)
+_stream_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+
 logging.basicConfig(
     level=getattr(logging, config.LOG_LEVEL, logging.INFO),
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler(config.ERROR_LOG),
-        logging.StreamHandler(sys.stdout)
-    ]
+    handlers=[_file_handler, _stream_handler]
 )
 
 # Minimum free disk space in MB before skipping capture
@@ -459,18 +467,24 @@ class ImageCaptureService:
     def _cleanup_old_images(self, keep_count=50):
         """Remove old images, keeping only the most recent ones."""
         try:
-            images = sorted(self.output_dir.glob("*.jpg"), key=lambda p: p.stat().st_mtime, reverse=True)
-            
-            # Don't delete images that are in the backlog
+            images = list(self.output_dir.glob("*.jpg"))
+
+            # Skip sorting overhead if under the limit
+            if len(images) <= keep_count:
+                return
+
+            # Sort by mtime only when cleanup is needed
+            images.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+
+            # Protect backlog files from deletion
             backlog_files = {item['filepath'] for item in self.upload_backlog}
-            
-            if len(images) > keep_count:
-                for old_image in images[keep_count:]:
-                    if str(old_image) not in backlog_files:
-                        old_image.unlink()
-                        logging.debug(f"🗑️  Cleaned up old image: {old_image.name}")
+
+            for old_image in images[keep_count:]:
+                if str(old_image) not in backlog_files:
+                    old_image.unlink()
+                    logging.debug(f"Cleaned up: {old_image.name}")
         except Exception as e:
-            logging.warning(f"⚠️  Cleanup failed: {e}")
+            logging.warning(f"Cleanup failed: {e}")
 
 if __name__ == "__main__":
     try:

@@ -8,24 +8,27 @@ Type=simple
 User=pi
 WorkingDirectory=/home/pi/Desktop/Evaratech/Evaraflow
 
-# Prevent Python bytecode cache to ensure new code runs after git pull
+# Python environment
 Environment="PYTHONDONTWRITEBYTECODE=1"
 Environment="PYTHONUNBUFFERED=1"
+Environment="VIRTUAL_ENV=/home/pi/Desktop/Evaratech/Evaraflow/.venv"
+Environment="PATH=/home/pi/Desktop/Evaratech/Evaraflow/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
-# Clear any existing .pyc files before starting
+# Pre-start: wait for network + clear stale .pyc files
 ExecStartPre=/bin/sleep 10
 ExecStartPre=/usr/bin/find /home/pi/Desktop/Evaratech/Evaraflow -type f -name "*.pyc" -delete
-ExecStartPre=/usr/bin/find /home/pi/Desktop/Evaratech/Evaraflow -type d -name "__pycache__" -exec rm -rf {} + 
+ExecStartPre=/usr/bin/find /home/pi/Desktop/Evaratech/Evaraflow -type d -name "__pycache__" -exec rm -rf {} +
 
-# Start service
-ExecStart=/usr/bin/python3 /home/pi/Desktop/Evaratech/Evaraflow/main_service.py
+# Start using venv Python
+ExecStart=/home/pi/Desktop/Evaratech/Evaraflow/.venv/bin/python3 /home/pi/Desktop/Evaratech/Evaraflow/main_service.py
 
-# Auto-restart on failure
+# Restart policy
 Restart=always
 RestartSec=30
 
-# Logging is handled natively by the Python logging module writing to error.log
-# and journalctl capturing standard output.
+# Resource limits (safety for Pi Zero W)
+MemoryMax=200M
+CPUQuota=90%
 
 [Install]
 WantedBy=multi-user.target

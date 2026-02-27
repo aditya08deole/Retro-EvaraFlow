@@ -1,43 +1,28 @@
 # ============================================================
 # RetroFit Image Capture Service v2.1 - Dependencies
 # Cloud Processing Architecture (No Edge ML)
-# Optimized for Raspberry Pi Zero W (512MB RAM, ARM6)
+# Optimized for Raspberry Pi Zero W (512MB RAM, ARMv6)
 # ============================================================
 
 # Core Image Capture
 # NOTE: picamera is for legacy camera stack (Buster/Bullseye-legacy).
 # On Bookworm, picamera2 is pre-installed via system packages.
-# Install whichever is appropriate for your OS version.
-picamera==1.13                      # PiCamera interface (legacy stack)
-numpy==1.19.5                       # Array operations (required by OpenCV)
+picamera==1.13
+
+# Numerical computing (required by OpenCV)
+numpy==1.19.5
 
 # Computer Vision (ArUco marker detection and ROI extraction)
-# (Handled by install.sh to bypass PyPI hash checks for ARMv6)
+# Installed separately in install.sh to bypass PyPI hash issues on ARMv6.
+# Target version: opencv-contrib-python-headless==4.5.1.48
 
 # GPIO Control
-RPi.GPIO==0.7.1                     # LED/relay control
+RPi.GPIO==0.7.1
 
-# Cloud Upload
-requests==2.26.0                    # HTTP requests for Telegram API
-urllib3==1.26.7                     # HTTP client (required by requests)
+# Cloud Upload & HTTP
+requests==2.26.0
+urllib3==1.26.7
 
 # Utilities
-python-dateutil==2.8.2              # Date/time utilities
-pytz==2021.3                        # Timezone support
-
-# ============================================================
-# REMOVED DEPENDENCIES
-# ============================================================
-# v2.0 removals:
-# - scikit-learn (150MB) - No ML classification on edge
-# - scikit-image (80MB) - No image preprocessing
-# - joblib (15MB) - No ML model loading
-# - python-telegram-bot (25MB) - Using requests directly
-# - imutils (5MB) - Not needed for simple ROI extraction
-#
-# v2.1 removals:
-# - pandas (80MB) - CSV loading uses built-in csv.DictReader
-# - openpyxl (10MB) - Legacy Excel support no longer needed
-#
-# Total Size: ~275MB → ~90MB (67% reduction from v1.x)
-# Memory Footprint: ~350MB → ~100MB (71% reduction from v1.x)
+python-dateutil==2.8.2
+pytz==2021.3

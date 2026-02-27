@@ -15,8 +15,9 @@ NO HARDCODED CREDENTIALS IN THIS FILE!
 # GPIO Pin for LED/Relay Control
 LED_PIN = 23
 
-# Camera Resolution (Max for PiCamera v2.1)
-CAMERA_RESOLUTION = (1640, 1232)  # Width x Height in pixels
+# Camera Resolution (optimized for Pi Zero W memory constraints)
+# 1280x960 = native 4:3 binned mode, saves ~40% RAM vs 1640x1232
+CAMERA_RESOLUTION = (1280, 960)  # Width x Height in pixels
 
 # Camera Rotation (0, 90, 180, or 270 degrees)
 CAMERA_ROTATION = 180  # Adjust based on physical camera orientation

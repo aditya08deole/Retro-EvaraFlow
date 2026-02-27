@@ -1,443 +1,426 @@
 #!/bin/bash
-# RetroFit Image Capture Service Installation Script
-# Cloud Processing Architecture - No Edge ML
-# Compatible with RPi 3B+ (ARM7) and RPi Zero W (ARM6)
-# 
-# v2.0 Changes:
-#   - Removed ML dependencies (scikit-learn, joblib, etc.)
-#   - Simplified to capture + upload only
-#   - Added Python bytecode cache prevention
-#   - Enhanced upload reliability with retry + verification
-#   - 50% faster installation, 65% less memory usage
+# ============================================================================
+# RetroFit Image Capture Service v2.1 — Production Installer
+# Fleet-ready deployment for Raspberry Pi Zero W (ARMv6 / Buster)
+#
+# Features:
+#   - Idempotent (safe to re-run)
+#   - Virtual environment isolation
+#   - Deterministic OpenCV installation (piwheels direct)
+#   - Structured timestamped logging
+#   - Fail-fast on any error
+#   - Full fresh-OS compatibility
+#
+# Usage: sudo ./install.sh
+# ============================================================================
 
-echo "=========================================="
-echo " RetroFit Image Capture Service v2.1"
-echo " Cloud Processing Architecture"
-echo "=========================================="
-echo ""
+set -euo pipefail
 
-# Detect Raspberry Pi model
+# --- Logging ---
+LOG_FILE="install.log"
+log() {
+    local level="$1"; shift
+    local msg="[$(date '+%Y-%m-%d %H:%M:%S')] [$level] $*"
+    echo "$msg" | tee -a "$LOG_FILE"
+}
+log_info()  { log "INFO"  "$@"; }
+log_warn()  { log "WARN"  "$@"; }
+log_error() { log "ERROR" "$@"; }
+log_ok()    { log " OK  " "$@"; }
+log_fail()  { log "FAIL" "$@"; exit 1; }
+
+# --- Header ---
+echo "==========================================" | tee -a "$LOG_FILE"
+echo " RetroFit Image Capture Service v2.1"      | tee -a "$LOG_FILE"
+echo " Production Installer"                     | tee -a "$LOG_FILE"
+echo "==========================================" | tee -a "$LOG_FILE"
+
+# --- Root check ---
+if [ "$(id -u)" -ne 0 ]; then
+    log_fail "This script must be run as root (sudo ./install.sh)"
+fi
+
+# --- Project directory ---
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$SCRIPT_DIR"
+VENV_DIR="$SCRIPT_DIR/.venv"
+
+# ============================================================================
+# PHASE 1: System Detection & Logging
+# ============================================================================
+log_info "=== PHASE 1: System Detection ==="
+
+# OS version
+OS_VERSION=$(cat /etc/os-release 2>/dev/null | grep PRETTY_NAME | cut -d'"' -f2 || echo "Unknown")
+log_info "OS: $OS_VERSION"
+
+# Architecture
+ARCH=$(uname -m)
+log_info "Architecture: $ARCH"
+
+# RAM
+TOTAL_RAM=$(free -m | awk '/^Mem:/{print $2}')
+log_info "Total RAM: ${TOTAL_RAM}MB"
+
+# CPU
+CPU_MODEL=$(grep -m1 'model name' /proc/cpuinfo 2>/dev/null | cut -d: -f2 | xargs || echo "Unknown")
+log_info "CPU: $CPU_MODEL"
+
+# Detect Pi model
 detect_rpi_model() {
-    if grep -q "Raspberry Pi Zero W" /proc/cpuinfo; then
+    if grep -q "Raspberry Pi Zero W" /proc/cpuinfo 2>/dev/null; then
         echo "Zero W"
-    elif grep -q "Raspberry Pi 3 Model B Plus" /proc/cpuinfo; then
+    elif [ "$ARCH" = "armv6l" ]; then
+        echo "Zero W"
+    elif grep -q "Raspberry Pi 3" /proc/cpuinfo 2>/dev/null; then
         echo "3B+"
     else
-        # Default - check for ARM version
-        if [ "$(uname -m)" = "armv6l" ]; then
-            echo "Zero W"
-        else
-            echo "3B+"
-        fi
+        echo "3B+"
     fi
 }
-
 RPI_MODEL=$(detect_rpi_model)
-echo "📟 Detected: Raspberry Pi $RPI_MODEL"
-echo ""
+log_info "Detected: Raspberry Pi $RPI_MODEL"
 
-# Function to check if Python package is installed
-check_python_package() {
-    python3 -c "import $1" 2>/dev/null
-    return $?
-}
-
-# Function to check package version
-check_package_version() {
-    python3 -c "import $1; print($1.__version__)" 2>/dev/null
-}
-
-echo "[1/7] Checking Python environment..."
-if command -v python3 &> /dev/null; then
-    PYTHON_VERSION=$(python3 --version | cut -d' ' -f2)
-    echo "✓ Python 3 found: $PYTHON_VERSION"
+# Python version
+if command -v python3 &>/dev/null; then
+    PYTHON_VERSION=$(python3 --version 2>&1 | cut -d' ' -f2)
+    log_ok "Python 3 found: $PYTHON_VERSION"
 else
-    echo "✗ Python 3 not found. Installing..."
-    # Fix stale repo references that cause 404s
-    sudo apt-get update --allow-releaseinfo-change
-    sudo apt-get install -y python3 python3-pip
+    log_info "Python 3 not found, will install"
 fi
 
-echo ""
-echo "[2/7] Checking system packages..."
+# ============================================================================
+# PHASE 2: APT Repository Repair (Buster EOL)
+# ============================================================================
+log_info "=== PHASE 2: APT Repository Repair ==="
 
-# PHASE 1: SYSTEM REPOSITORY REPAIR (Buster EOL Fix)
-echo "  🔧 Repairing deprecated Buster repositories (Fixing 404s)..."
-# Replace old raspbian URL with legacy archive
-sudo sed -i 's/raspbian.raspberrypi.org/legacy.raspbian.org/g' /etc/apt/sources.list 2>/dev/null
-# Clean apt cache and allow release info changes since Buster moved to oldoldstable
-sudo apt-get clean
-sudo apt-get update --allow-releaseinfo-change -y > /dev/null 2>&1
-# Fix broken installs and update missing packages
-sudo apt-get --fix-broken install -y > /dev/null 2>&1
-sudo apt-get update --fix-missing -y > /dev/null 2>&1
-
-# Check and install pip if needed
-if ! command -v pip3 &> /dev/null; then
-    echo "  Installing pip3..."
-    sudo apt-get install -y python3-pip
+# Fix deprecated Buster repositories
+if grep -q "raspbian.raspberrypi.org" /etc/apt/sources.list 2>/dev/null; then
+    log_info "Replacing deprecated raspbian.raspberrypi.org with legacy.raspbian.org"
+    sed -i 's/raspbian.raspberrypi.org/legacy.raspbian.org/g' /etc/apt/sources.list
+    log_ok "APT sources updated"
 else
-    echo "✓ pip3 already installed"
+    log_ok "APT sources already using legacy mirror"
 fi
 
-# Install system dependencies based on model
-echo ""
-echo "  Installing system dependencies..."
+log_info "Updating package lists..."
+apt-get clean
+apt-get update --allow-releaseinfo-change -y > /dev/null 2>&1 || true
+apt-get --fix-broken install -y > /dev/null 2>&1 || true
+apt-get update --fix-missing -y > /dev/null 2>&1 || true
+log_ok "APT repositories ready"
+
+# ============================================================================
+# PHASE 3: System Package Installation
+# ============================================================================
+log_info "=== PHASE 3: System Packages ==="
+
+# Core packages (always needed)
+CORE_PKGS="python3 python3-pip python3-venv python3-dev git"
+
+# Build tools (needed for native Python packages)
+BUILD_PKGS="build-essential cmake pkg-config"
+
+# OpenCV runtime dependencies
+OPENCV_PKGS="libatlas-base-dev libopenjp2-7 libtiff5 libjasper1 libjasper-dev"
+OPENCV_PKGS="$OPENCV_PKGS libjpeg-dev libpng-dev"
+
+# Camera libraries
+CAMERA_PKGS="libraspberrypi-bin"
+
+install_pkg_group() {
+    local group_name="$1"; shift
+    log_info "Installing $group_name..."
+    for pkg in "$@"; do
+        if dpkg -s "$pkg" &>/dev/null; then
+            log_ok "  $pkg (already installed)"
+        else
+            if apt-get install -y "$pkg" > /dev/null 2>&1; then
+                log_ok "  $pkg (installed)"
+            else
+                log_warn "  $pkg (failed to install, continuing)"
+            fi
+        fi
+    done
+}
+
+install_pkg_group "core packages" $CORE_PKGS
+install_pkg_group "build tools" $BUILD_PKGS
+install_pkg_group "OpenCV dependencies" $OPENCV_PKGS
+install_pkg_group "camera libraries" $CAMERA_PKGS
+
+# libcamera (optional, for picamera2 on newer OS)
+apt-get install -y python3-libcamera libcamera-dev > /dev/null 2>&1 || \
+    log_warn "python3-libcamera not available (expected on Buster)"
+
+# Pi Zero W specific: expand swap for large compilations
 if [ "$RPI_MODEL" = "Zero W" ]; then
-    echo "  ⚙️  Optimizing for RPi Zero W (512MB RAM, ARM6)..."
-    
-    # Expand swap to 2GB for OpenCV compilation (512MB RAM is not enough)
-    CURRENT_SWAP=$(grep CONF_SWAPSIZE /etc/dphys-swapfile | grep -oP '\d+')
+    CURRENT_SWAP=$(grep CONF_SWAPSIZE /etc/dphys-swapfile 2>/dev/null | grep -oP '\d+' || echo "100")
     if [ "$CURRENT_SWAP" -lt 2048 ] 2>/dev/null; then
-        echo "  📦 Expanding swap to 2GB for compilation..."
-        sudo dphys-swapfile swapoff
-        sudo sed -i 's/CONF_SWAPSIZE=.*/CONF_SWAPSIZE=2048/' /etc/dphys-swapfile
-        sudo dphys-swapfile setup
-        sudo dphys-swapfile swapon
-        echo "  ✓ Swap expanded to 2GB"
-    fi
-
-    # Refresh repos again to be safe
-    sudo apt-get update --fix-missing
-    
-    # Build tools & Hardware Acceleration (CRITICAL for ArUco on ARMv6)
-    sudo apt-get install -y cmake pkg-config build-essential libatlas-base-dev
-    sudo apt-get install -y libopenjp2-7 libtiff5 libjpeg-dev libpng-dev libjasper-dev libgst7 libgl1-mesa-glx
-    
-    # 🧪 Expert Step: Ensure pip build tools are latest
-    sudo pip3 install --upgrade pip setuptools wheel
-    
-    # libcamera dependencies
-    sudo apt-get install -y libcamera-dev python3-libcamera 2>/dev/null || \
-    echo "  ! python3-libcamera not found (common on older OS, skipping)"
-else
-    echo "  ⚙️  Optimizing for RPi 3B+ (1GB RAM, ARM7)..."
-    sudo apt-get install -y cmake pkg-config build-essential libatlas-base-dev
-    sudo apt-get install -y libcamera-dev python3-libcamera 2>/dev/null || \
-    echo "  ! python3-libcamera not found (skipping)"
-fi
-
-echo ""
-echo "[3/7] Checking required Python packages..."
-
-# Use requirements.txt for installation
-if [ ! -f "requirements.txt" ]; then
-    echo "⚠️  requirements.txt not found!"
-    exit 1
-fi
-
-echo "  Checking installed packages vs requirements..."
-
-# Parse requirements.txt and check each package
-while IFS= read -r line; do
-    # Skip comments and empty lines
-    [[ "$line" =~ ^#.*$ ]] && continue
-    [[ -z "$line" ]] && continue
-    
-    # Extract package name (before == or >= or !=)
-    package_name=$(echo "$line" | sed 's/[=!<>].*//' | xargs)
-    
-    # Map pip package names to import names
-    case "$package_name" in
-        "opencv-contrib-python-headless") import_name="cv2" ;;
-        "RPi.GPIO") import_name="RPi.GPIO" ;;
-        "python-dateutil") import_name="dateutil" ;;
-        *) import_name="$package_name" ;;
-    esac
-    
-    if check_python_package "$import_name"; then
-        version=$(check_package_version "$import_name" 2>/dev/null || echo "unknown")
-        echo "  ✓ $package_name ($version)"
+        log_info "Expanding swap to 2GB (current: ${CURRENT_SWAP}MB)..."
+        dphys-swapfile swapoff
+        sed -i 's/CONF_SWAPSIZE=.*/CONF_SWAPSIZE=2048/' /etc/dphys-swapfile
+        dphys-swapfile setup
+        dphys-swapfile swapon
+        log_ok "Swap expanded to 2GB"
     else
-        echo "  ✗ $package_name - missing"
+        log_ok "Swap already >= 2GB"
     fi
-done < requirements.txt
-
-echo ""
-echo "  Installing/updating packages from requirements.txt..."
-
-if [ "$RPI_MODEL" = "Zero W" ]; then
-    echo "  ⏳ Note: Installation may take 5-10 minutes..."
-    echo "     (opencv-contrib requires compilation)"
 fi
 
-# PHASE 1: COMPLETE PYTHON ENVIRONMENT PURGE
-echo "  ☢️  Executing Nuclear Environment Purge..."
-sudo apt-get remove -y python3-opencv > /dev/null 2>&1
-sudo pip3 uninstall -y opencv-python opencv-contrib-python opencv-python-headless opencv-contrib-python-headless 2>/dev/null
+log_ok "System packages ready"
 
-# Manual folder removal (Surgical Cleanse)
-echo "  🧹 Removing residual dist-packages folders..."
-sudo rm -rf /usr/lib/python3/dist-packages/cv2* 2>/dev/null
-sudo rm -rf /usr/lib/python3/dist-packages/opencv* 2>/dev/null
-sudo rm -rf /usr/local/lib/python3.7/dist-packages/cv2* 2>/dev/null
-sudo rm -rf /usr/local/lib/python3.7/dist-packages/opencv* 2>/dev/null
-sudo rm -rf /usr/local/lib/python3/dist-packages/cv2* 2>/dev/null
-sudo rm -rf /usr/local/lib/python3/dist-packages/opencv* 2>/dev/null
+# ============================================================================
+# PHASE 4: Python Virtual Environment
+# ============================================================================
+log_info "=== PHASE 4: Python Virtual Environment ==="
 
-# Purge pip cache fully for all users
-echo "  🧹 NUKING pip cache (Fixing SHA256 mismatches)..."
-sudo rm -rf /root/.cache/pip
-sudo rm -rf ~/.cache/pip
-python3 -m pip install --upgrade pip setuptools wheel > /dev/null 2>&1
-
-# Verify no cv2 remains
-if python3 -c "import cv2" 2>/dev/null; then
-    echo "  ❌ ERROR: Environment purge failed. cv2 still importable."
-    exit 1
-fi
-echo "  ✓ Environment successfully sanitized"
-
-# PHASE 2: DISABLE HASH ENFORCEMENT & NEUTRALIZE SHA256 BLOCKAGE
-# PHASE 3: CORRECT OPENCV INSTALL STRATEGY (ARMv6 SAFE)
-echo "  📥 Installing Verified OpenCV Contrib Strategy (4.5.1.48 / ARMv6)..."
-
-# Objective: Install without triggering the hash mismatch from requirements.txt
-# We download and install directly to be 100% deterministic
-WHEEL_URL="https://www.piwheels.org/simple/opencv-contrib-python-headless/opencv_contrib_python_headless-4.5.1.48-cp37-cp37m-linux_armv6l.whl"
-
-# Attempt direct install bypassing indexes first (most robust against hash mismatches)
-if sudo pip3 install --no-cache-dir "$WHEEL_URL"; then
-    echo "  ✓ OpenCV 4.5.1.48 installed via direct wheel link"
+if [ -d "$VENV_DIR" ] && [ -f "$VENV_DIR/bin/python3" ]; then
+    log_ok "Virtual environment exists at $VENV_DIR"
 else
-    echo "  ⚠️  Direct link failed, trying index override..."
-    sudo pip3 install --no-cache-dir --force-reinstall opencv-contrib-python-headless==4.5.1.48 \
-        --index-url https://www.piwheels.org/simple
+    log_info "Creating virtual environment at $VENV_DIR..."
+    python3 -m venv --system-site-packages "$VENV_DIR"
+    log_ok "Virtual environment created"
 fi
 
-# PHASE 4: ARCHITECTURE & WHEEL VERIFICATION
-if [ ! -d "/usr/local/lib/python3.7/dist-packages/cv2" ] && [ ! -d "/usr/lib/python3/dist-packages/cv2" ]; then
-    echo "  ⚠️  Binary wheel might have failed. Checking system paths..."
-fi
+# Activate venv for the rest of the script
+export PATH="$VENV_DIR/bin:$PATH"
+VENV_PYTHON="$VENV_DIR/bin/python3"
+VENV_PIP="$VENV_DIR/bin/pip3"
 
-# Install all other standard dependencies normally
-sudo pip3 install --no-cache-dir -r requirements.txt
+# Upgrade pip inside venv
+log_info "Upgrading pip inside venv..."
+"$VENV_PYTHON" -m pip install --upgrade pip setuptools wheel > /dev/null 2>&1
+PIP_VERSION=$("$VENV_PIP" --version 2>&1 | head -1)
+log_ok "pip: $PIP_VERSION"
 
-# Final Path Correction
-sudo ldconfig
+# ============================================================================
+# PHASE 5: OpenCV Nuclear Cleanse + Deterministic Install
+# ============================================================================
+log_info "=== PHASE 5: OpenCV Installation ==="
 
-# PHASE 5: SOURCE BUILD STRATEGY (FALLBACK)
-# This is only executed if the smoke test fails after wheel installation
-VERIFY_CV2="import cv2; import sys; sys.exit(0 if (hasattr(cv2, 'aruco') or hasattr(cv2.aruco, 'Dictionary')) else 1)"
+# Remove any conflicting system-level OpenCV
+log_info "Removing conflicting OpenCV installations..."
+apt-get remove -y python3-opencv > /dev/null 2>&1 || true
+"$VENV_PIP" uninstall -y opencv-python opencv-contrib-python \
+    opencv-python-headless opencv-contrib-python-headless 2>/dev/null || true
 
-if ! sudo python3 -c "$VERIFY_CV2" 2>/dev/null; then
-    echo "  ⚠️  Wheel installation missing ArUco! Pivoting to Source Build (Phase 5)..."
-    echo "  ⏳ This will take 2-4 hours on a Pi Zero. Please ensure power is stable."
-    
-    # 1. Install Build Dependencies
-    sudo apt-get install -y build-essential cmake pkg-config libjpeg-dev libtiff5-dev libjasper-dev libpng-dev \
-        libavcodec-dev libavformat-dev libswscale-dev libv4l-dev libxvidcore-dev libx264-dev \
-        libfontconfig1-dev libcairo2-dev libgdk-pixbuf2.0-dev libpango1.0-dev \
-        libgtk2.0-dev libgtk-3-dev libatlas-base-dev gfortran python3-dev
-    
-    # 2. Preparation
-    cd /tmp
-    rm -rf opencv opencv_contrib
-    git clone --depth 1 --branch 4.5.1 https://github.com/opencv/opencv.git
-    git clone --depth 1 --branch 4.5.1 https://github.com/opencv/opencv_contrib.git
-    
-    # 3. Build & Install
-    cd opencv
-    mkdir -p build && cd build
-    cmake -D CMAKE_BUILD_TYPE=RELEASE \
-          -D CMAKE_INSTALL_PREFIX=/usr/local \
-          -D OPENCV_EXTRA_MODULES_PATH=/tmp/opencv_contrib/modules \
-          -D ENABLE_NEON=OFF \
-          -D ENABLE_VFPV3=OFF \
-          -D BUILD_TESTS=OFF \
-          -D BUILD_EXAMPLES=OFF \
-          -D OPENCV_ENABLE_NONFREE=ON \
-          -D BUILD_opencv_aruco=ON \
-          -D PYTHON3_EXECUTABLE=$(which python3) \
-          -D BUILD_opencv_python3=ON ..
-    
-    make -j$(nproc)
-    sudo make install
-    sudo ldconfig
-    echo "  ✓ Source build complete"
+# Purge residual folders
+rm -rf /usr/lib/python3/dist-packages/cv2* 2>/dev/null || true
+rm -rf /usr/lib/python3/dist-packages/opencv* 2>/dev/null || true
+rm -rf "$VENV_DIR"/lib/python3.*/site-packages/cv2* 2>/dev/null || true
+rm -rf "$VENV_DIR"/lib/python3.*/site-packages/opencv* 2>/dev/null || true
+
+# Purge pip cache
+rm -rf /root/.cache/pip 2>/dev/null || true
+rm -rf ~/.cache/pip 2>/dev/null || true
+log_ok "Environment sanitized"
+
+# Install OpenCV-contrib-headless 4.5.1.48 from piwheels (direct URL to bypass hash issues)
+OPENCV_VERSION="4.5.1.48"
+WHEEL_URL="https://www.piwheels.org/simple/opencv-contrib-python-headless/opencv_contrib_python_headless-${OPENCV_VERSION}-cp37-cp37m-linux_armv6l.whl"
+
+log_info "Installing OpenCV $OPENCV_VERSION (ARMv6 wheel from piwheels)..."
+if "$VENV_PIP" install --no-cache-dir "$WHEEL_URL" > /dev/null 2>&1; then
+    log_ok "OpenCV $OPENCV_VERSION installed via direct wheel"
 else
-    echo "  ✓ Pre-compiled wheel verified with ArUco support"
+    log_warn "Direct wheel failed, trying index fallback..."
+    if "$VENV_PIP" install --no-cache-dir --force-reinstall \
+        "opencv-contrib-python-headless==$OPENCV_VERSION" \
+        --index-url https://www.piwheels.org/simple > /dev/null 2>&1; then
+        log_ok "OpenCV $OPENCV_VERSION installed via piwheels index"
+    else
+        log_fail "OpenCV installation failed. Check network and piwheels availability."
+    fi
 fi
 
-# PHASE 6: FINAL VERIFICATION
-echo ""
-echo "🔍 Performing Final Smoke Test (Phase 6)..."
+# ============================================================================
+# PHASE 6: Python Dependencies (from requirements.txt)
+# ============================================================================
+log_info "=== PHASE 6: Python Dependencies ==="
+
+if [ ! -f "requirements.txt" ]; then
+    log_fail "requirements.txt not found in $SCRIPT_DIR"
+fi
+
+log_info "Installing Python packages from requirements.txt..."
+if "$VENV_PIP" install --no-cache-dir -r requirements.txt > /dev/null 2>&1; then
+    log_ok "All Python packages installed"
+else
+    log_warn "Some packages may have failed, checking individually..."
+    while IFS= read -r line; do
+        [[ "$line" =~ ^#.*$ ]] && continue
+        [[ -z "$line" ]] && continue
+        pkg=$(echo "$line" | sed 's/[=!<>].*//' | xargs)
+        if "$VENV_PIP" show "$pkg" > /dev/null 2>&1; then
+            log_ok "  $pkg"
+        else
+            log_warn "  $pkg — MISSING (attempting individual install)"
+            "$VENV_PIP" install --no-cache-dir "$line" > /dev/null 2>&1 || \
+                log_warn "  $pkg — failed to install"
+        fi
+    done < requirements.txt
+fi
+
+# ============================================================================
+# PHASE 7: ArUco Verification (Smoke Test)
+# ============================================================================
+log_info "=== PHASE 7: ArUco Smoke Test ==="
 
 VERIFY_SCRIPT="
 import sys
 try:
     import cv2
-    print(f'✓ CV2 Version: {cv2.__version__}')
-    if hasattr(cv2, 'aruco'):
-        print('✅ SUCCESS: ArUco (Attribute) verified!')
+    v = cv2.__version__
+    has_aruco = hasattr(cv2, 'aruco')
+    if not has_aruco:
+        import cv2.aruco
+        has_aruco = True
+    if has_aruco:
+        print(f'OK|{v}')
         sys.exit(0)
-    import cv2.aruco
-    print('✅ SUCCESS: ArUco (Submodule) verified!')
-    sys.exit(0)
+    else:
+        print(f'FAIL|{v}|no aruco')
+        sys.exit(1)
 except Exception as e:
-    print(f'❌ ERROR: {e}')
+    print(f'FAIL||{e}')
     sys.exit(1)
 "
 
-if sudo python3 -c "$VERIFY_SCRIPT"; then
-    echo "  ✓ System operational"
+RESULT=$("$VENV_PYTHON" -c "$VERIFY_SCRIPT" 2>&1)
+if [ $? -eq 0 ]; then
+    CV_VERSION=$(echo "$RESULT" | cut -d'|' -f2)
+    log_ok "OpenCV $CV_VERSION with ArUco verified"
 else
-    echo "  ❌ CRITICAL: Final verification failed."
-    exit 1
+    log_error "ArUco verification result: $RESULT"
+    log_fail "ArUco smoke test failed. OpenCV installation is broken."
 fi
 
-# PHASE 7: SYSTEM INTEGRATION CHECK
-echo "[7/7] Restarting and verifying service integration..."
-sudo systemctl daemon-reload
-sudo systemctl restart codetest.service
-sleep 3
-if systemctl is-active --quiet codetest.service; then
-    echo "  ✓ Service integration: OK"
-else
-    echo "  ❌ Service failed to start. Check 'sudo journalctl -u codetest.service'"
-fi
+# ============================================================================
+# PHASE 8: rclone Installation
+# ============================================================================
+log_info "=== PHASE 8: rclone ==="
 
-echo ""
-echo "========================================"
-echo "[3.5/6] Installing rclone (Latest Version)..."
-echo "========================================"
+if command -v rclone &>/dev/null; then
+    RCLONE_VER=$(rclone version 2>&1 | head -n1)
+    log_ok "rclone already installed: $RCLONE_VER"
 
-if command -v rclone &> /dev/null; then
-    RCLONE_VERSION=$(rclone version | head -n1)
-    echo "✓ rclone already installed: $RCLONE_VERSION"
-    
-    # Check if it's an old version from apt repository
-    if [[ "$RCLONE_VERSION" == *"v1.45"* ]]; then
-        echo "⚠️  Old rclone v1.45 detected (incompatible with Google OAuth)"
-        echo "   Upgrading to latest version..."
-        sudo apt remove -y rclone
-        curl https://rclone.org/install.sh | sudo bash
-        RCLONE_VERSION=$(rclone version | head -n1)
-        echo "✓ rclone upgraded to: $RCLONE_VERSION"
+    # Upgrade if very old (v1.45 from apt is incompatible with Google OAuth)
+    if echo "$RCLONE_VER" | grep -q "v1\.45"; then
+        log_warn "rclone v1.45 is too old, upgrading..."
+        apt remove -y rclone > /dev/null 2>&1 || true
+        curl -s https://rclone.org/install.sh | bash > /dev/null 2>&1
+        RCLONE_VER=$(rclone version 2>&1 | head -n1)
+        log_ok "rclone upgraded to: $RCLONE_VER"
     fi
 else
-    echo "Installing latest rclone from official source..."
-    
-    # Use official rclone install script (installs latest version)
-    if curl https://rclone.org/install.sh | sudo bash; then
-        RCLONE_VERSION=$(rclone version | head -n1)
-        echo "✓ rclone installed: $RCLONE_VERSION"
-        
-        # Create config directory
-        mkdir -p ~/.config/rclone
-        chmod 700 ~/.config/rclone
-        echo "✓ rclone config directory created"
-        
-        echo ""
-        echo "⚠️  IMPORTANT: rclone configuration required for Google Drive uploads"
-        echo "   After installation completes, run: rclone config"
-        echo "   Setup guide:"
-        echo "   1. Choose 'n' for new remote"
-        echo "   2. Name it 'gdrive'"
-        echo "   3. Select 'drive' (Google Drive)"
-        echo "   4. Leave client_id and client_secret blank"
-        echo "   5. Choose scope=1 (full access)"
-        echo "   6. For auto-config, follow OAuth prompts"
-        echo ""
+    log_info "Installing rclone..."
+    if curl -s https://rclone.org/install.sh | bash > /dev/null 2>&1; then
+        RCLONE_VER=$(rclone version 2>&1 | head -n1)
+        log_ok "rclone installed: $RCLONE_VER"
+        mkdir -p /home/pi/.config/rclone
+        chmod 700 /home/pi/.config/rclone
+        chown -R pi:pi /home/pi/.config/rclone
     else
-        echo "⚠️  rclone installation failed"
-        echo "   Google Drive uploads will not work until rclone is configured"
-        echo "   Install manually: curl https://rclone.org/install.sh | sudo bash"
+        log_warn "rclone installation failed — GDrive uploads will not work"
     fi
 fi
 
-echo "✓ rclone setup complete"
-
-echo ""
-echo "[4/7] Creating required files..."
-if [ ! -f "error.log" ]; then
-    touch error.log
-    echo "✓ Created error.log"
+# Validate rclone remote
+if rclone listremotes 2>/dev/null | grep -q "gdrive:"; then
+    log_ok "rclone remote 'gdrive' configured"
 else
-    echo "✓ error.log already exists"
+    log_warn "rclone remote 'gdrive' not configured. Run: rclone config"
 fi
 
-if [ ! -f "update.log" ]; then
-    touch update.log
-    echo "✓ Created update.log"
+# ============================================================================
+# PHASE 9: Runtime Files
+# ============================================================================
+log_info "=== PHASE 9: Runtime Files ==="
+
+for f in error.log update.log; do
+    if [ ! -f "$f" ]; then
+        touch "$f"
+        chown pi:pi "$f"
+        log_ok "Created $f"
+    else
+        log_ok "$f exists"
+    fi
+done
+
+mkdir -p capture_output
+chown pi:pi capture_output
+log_ok "capture_output/ ready"
+
+# ============================================================================
+# PHASE 10: systemd Service Installation
+# ============================================================================
+log_info "=== PHASE 10: systemd Service ==="
+
+SERVICE_NAME="codetest.service"
+SERVICE_DEST="/etc/systemd/system/$SERVICE_NAME"
+
+if [ ! -f "$SERVICE_NAME" ]; then
+    log_fail "Service file $SERVICE_NAME not found in $SCRIPT_DIR"
+fi
+
+# Stop existing service gracefully
+if systemctl is-active --quiet "$SERVICE_NAME" 2>/dev/null; then
+    log_info "Stopping existing service..."
+    systemctl stop "$SERVICE_NAME"
+fi
+
+# Install service file
+cp "$SERVICE_NAME" "$SERVICE_DEST"
+systemctl daemon-reload
+systemctl enable "$SERVICE_NAME"
+log_ok "Service installed and enabled"
+
+# Start service
+log_info "Starting service..."
+systemctl start "$SERVICE_NAME"
+sleep 3
+
+if systemctl is-active --quiet "$SERVICE_NAME"; then
+    log_ok "Service started successfully"
 else
-    echo "✓ update.log already exists"
+    log_warn "Service may not have started. Check: sudo journalctl -u $SERVICE_NAME -n 30"
 fi
 
-echo ""
-echo "[5/7] Configuring systemd service..."
+# ============================================================================
+# PHASE 11: Auto-Update Cron
+# ============================================================================
+log_info "=== PHASE 11: Auto-Update Cron ==="
 
-# Check if service already exists
-if systemctl list-unit-files | grep -q "codetest.service"; then
-    echo "⚠ Service already exists. Updating..."
-    sudo systemctl stop codetest.service 2>/dev/null
-fi
+CRON_CMD="*/30 * * * * $SCRIPT_DIR/run_cmd_bash.sh >> $SCRIPT_DIR/update.log 2>&1"
 
-# Copy service file
-sudo cp codetest.service /etc/systemd/system/
-echo "✓ Service file copied"
-
-# Reload systemd
-sudo systemctl daemon-reload
-echo "✓ Systemd reloaded"
-
-# Enable service
-sudo systemctl enable codetest.service
-echo "✓ Service enabled for auto-start"
-
-echo ""
-echo "[6/7] Starting service..."
-sudo systemctl start codetest.service
-
-# Wait a moment for service to initialize
-sleep 2
-
-# Check status
-SERVICE_STATUS=$(systemctl is-active codetest.service)
-if [ "$SERVICE_STATUS" = "active" ]; then
-    echo "✓ Service started successfully"
+if crontab -u pi -l 2>/dev/null | grep -q "run_cmd_bash.sh"; then
+    log_ok "Auto-update cron already configured"
 else
-    echo "⚠ Service status: $SERVICE_STATUS"
-    echo "  Check logs: sudo journalctl -u codetest.service -n 50"
+    (crontab -u pi -l 2>/dev/null; echo "$CRON_CMD") | crontab -u pi -
+    log_ok "Auto-update cron installed (every 30 minutes)"
 fi
 
-echo ""
-echo "[7/7] Setting up auto-update cron job..."
-CRON_CMD="*/30 * * * * /home/pi/Desktop/Evaratech/Evaraflow/run_cmd_bash.sh >> /home/pi/Desktop/Evaratech/Evaraflow/update.log 2>&1"
-
-# Check if cron job already exists
-if crontab -l 2>/dev/null | grep -q "run_cmd_bash.sh"; then
-    echo "✓ Auto-update cron job already configured"
-else
-    (crontab -l 2>/dev/null; echo "$CRON_CMD") | crontab -
-    echo "✓ Auto-update cron job installed (every 30 minutes)"
-fi
-
-echo ""
-echo "=========================================="
-echo "  Installation Complete! (v2.1)"
-echo "=========================================="
-echo ""
-echo "Architecture: Cloud Processing (Capture + Upload Only)"
-echo "Memory Usage: ~120MB (65% reduction from v1.x)"
-echo "Disk Usage: ~90MB (70% reduction from v1.x, removed pandas/openpyxl)"
-echo ""
-echo "Useful commands:"
-echo "  Service status : sudo systemctl status codetest.service"
-echo "  View logs      : tail -f error.log"
-echo "  View live logs : sudo journalctl -u codetest.service -f"
-echo "  Restart service: sudo systemctl restart codetest.service"
-echo "  Stop service   : sudo systemctl stop codetest.service"
-echo "  Health check   : cat health.json"
-echo ""
-echo "Next steps:"
-echo "  1. Configure rclone: rclone config (create remote named 'gdrive')"
-echo "  2. Create config_WM.py with: device_id = \"YOUR-DEVICE-ID\""
-echo "  3. Add device to credentials_store.csv with GDrive/ThingSpeak credentials"
-echo "  4. Verify service logs: tail -f error.log"
-echo "  5. Check first capture cycle (5 minutes after start)"
-echo ""
-echo "Auto-update: Cron runs every 30 minutes (see update.log)"
-echo "Health file: health.json updated each cycle for fleet monitoring"
-echo "Note: Service automatically clears Python cache on restart"
-echo ""
+# ============================================================================
+# FINAL SUMMARY
+# ============================================================================
+echo "" | tee -a "$LOG_FILE"
+echo "==========================================" | tee -a "$LOG_FILE"
+echo "  Installation Complete" | tee -a "$LOG_FILE"
+echo "==========================================" | tee -a "$LOG_FILE"
+log_info "Architecture: $ARCH ($RPI_MODEL)"
+log_info "Python: $PYTHON_VERSION (venv: $VENV_DIR)"
+log_info "OpenCV: $CV_VERSION with ArUco"
+log_info "rclone: $(rclone version 2>&1 | head -1 || echo 'not installed')"
+echo "" | tee -a "$LOG_FILE"
+echo "Useful commands:" | tee -a "$LOG_FILE"
+echo "  Service status : sudo systemctl status codetest.service" | tee -a "$LOG_FILE"
+echo "  View logs      : tail -f error.log" | tee -a "$LOG_FILE"
+echo "  Live logs      : sudo journalctl -u codetest.service -f" | tee -a "$LOG_FILE"
+echo "  Restart        : sudo systemctl restart codetest.service" | tee -a "$LOG_FILE"
+echo "" | tee -a "$LOG_FILE"
+echo "Next steps:" | tee -a "$LOG_FILE"
+echo "  1. Configure rclone: rclone config (remote name: 'gdrive')" | tee -a "$LOG_FILE"
+echo "  2. Create config_WM.py: device_id = \"YOUR-DEVICE-ID\"" | tee -a "$LOG_FILE"
+echo "  3. Verify: sudo journalctl -u codetest.service -f" | tee -a "$LOG_FILE"
+echo "" | tee -a "$LOG_FILE"

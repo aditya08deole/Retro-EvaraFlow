@@ -116,7 +116,7 @@ log_ok "APT repositories ready"
 log_info "=== PHASE 3: System Packages ==="
 
 # Core packages (always needed)
-CORE_PKGS="python3 python3-pip python3-venv python3-dev git"
+CORE_PKGS="python3 python3-pip python3-venv python3-dev git ca-certificates"
 
 # Build tools (needed for native Python packages)
 BUILD_PKGS="build-essential cmake pkg-config"
@@ -216,21 +216,32 @@ rm -rf /root/.cache/pip 2>/dev/null || true
 rm -rf ~/.cache/pip 2>/dev/null || true
 log_ok "Environment sanitized"
 
-# Install OpenCV-contrib-headless 4.5.1.48 from piwheels (direct URL to bypass hash issues)
+# Install OpenCV-contrib-headless 4.5.1.48 from archive1.piwheels.org
 OPENCV_VERSION="4.5.1.48"
-WHEEL_URL="https://www.piwheels.org/simple/opencv-contrib-python-headless/opencv_contrib_python_headless-${OPENCV_VERSION}-cp37-cp37m-linux_armv6l.whl"
+WHEEL_URL="https://archive1.piwheels.org/simple/opencv-contrib-python-headless/opencv_contrib_python_headless-${OPENCV_VERSION}-cp37-cp37m-linux_armv6l.whl"
 
-log_info "Installing OpenCV $OPENCV_VERSION (ARMv6 wheel from piwheels)..."
-if "$VENV_PIP" install --no-cache-dir "$WHEEL_URL" > /dev/null 2>&1; then
+log_info "Installing OpenCV $OPENCV_VERSION (ARMv6 wheel from archive1.piwheels.org)..."
+# Adding --trusted-host to bypass SSL/Certificate issues common on Buster
+# Removing > /dev/null to allow error diagnostics if it fails
+if "$VENV_PIP" install --no-cache-dir \
+    --trusted-host archive1.piwheels.org \
+    --trusted-host www.piwheels.org \
+    --trusted-host pypi.org \
+    --trusted-host files.pythonhosted.org \
+    "$WHEEL_URL"; then
     log_ok "OpenCV $OPENCV_VERSION installed via direct wheel"
 else
     log_warn "Direct wheel failed, trying index fallback..."
     if "$VENV_PIP" install --no-cache-dir --force-reinstall \
         "opencv-contrib-python-headless==$OPENCV_VERSION" \
-        --index-url https://www.piwheels.org/simple > /dev/null 2>&1; then
+        --index-url https://www.piwheels.org/simple \
+        --trusted-host www.piwheels.org \
+        --trusted-host archive1.piwheels.org \
+        --trusted-host pypi.org \
+        --trusted-host files.pythonhosted.org; then
         log_ok "OpenCV $OPENCV_VERSION installed via piwheels index"
     else
-        log_fail "OpenCV installation failed. Check network and piwheels availability."
+        log_fail "OpenCV installation failed. Manually check: ping archive1.piwheels.org"
     fi
 fi
 

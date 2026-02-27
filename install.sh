@@ -204,24 +204,23 @@ log_info "Sanitizing environment..."
 "$VENV_PIP" cache purge > /dev/null 2>&1 || true
 
 OPENCV_VERSION="4.5.1.48"
-WHEEL_URL="https://archive1.piwheels.org/simple/opencv-contrib-python-headless/opencv_contrib_python_headless-${OPENCV_VERSION}-cp37-cp37m-linux_armv6l.whl"
+WHEEL_URL="https://www.piwheels.org/simple/opencv-contrib-python-headless/opencv_contrib_python_headless-${OPENCV_VERSION}-cp37-cp37m-linux_armv6l.whl"
 
 log_info "Installing OpenCV $OPENCV_VERSION (ARMv6 Direct Wheel)..."
 
-# Strategy: Direct wheel with trusted-host bypass
+# Strategy: Direct wheel from main piwheels with trusted-host bypass
 if "$VENV_PIP" install --no-cache-dir \
-    --trusted-host archive1.piwheels.org \
     --trusted-host www.piwheels.org \
     --trusted-host pypi.org \
     --trusted-host files.pythonhosted.org \
     "$WHEEL_URL"; then
     log_ok "OpenCV $OPENCV_VERSION installed"
 else
-    log_warn "Direct wheel failed, trying index isolation..."
-    if "$VENV_PIP" install --no-cache-dir \
+    log_warn "Direct wheel failed, trying isolated index without dependencies..."
+    # If the direct URL fails hash checks, we use the index but disable deps to prevent it
+    # from verifying hashes of dependencies we don't need or already installed
+    if "$VENV_PIP" install --no-cache-dir --no-deps \
         --index-url https://www.piwheels.org/simple \
-        --extra-index-url https://pypi.org/simple \
-        --trusted-host archive1.piwheels.org \
         --trusted-host www.piwheels.org \
         --trusted-host pypi.org \
         --trusted-host files.pythonhosted.org \

@@ -222,13 +222,28 @@ if [ "$WHEEL_COUNT" -lt 2 ]; then
     log_fail "Offline wheels missing! You must have at least NumPy and OpenCV wheels in this folder."
 fi
 
-log_info "Installing ALL local wheels..."
-# Strategy: total offline install of everything provided
-if "$VENV_PIP" install *.whl --no-index --no-cache-dir; then
-    log_ok "Local wheel installation complete"
+log_info "Installing wheels in STRICT ORDER (Phase C)..."
+# 1. Install NumPy first
+NUMPY_WHEEL=$(ls numpy-*.whl 2>/dev/null | head -n 1)
+if [ -n "$NUMPY_WHEEL" ]; then
+    log_info "Installing NumPy from $NUMPY_WHEEL..."
+    "$VENV_PIP" install "$NUMPY_WHEEL" --no-index --no-cache-dir || log_warn "NumPy installation had issues"
 else
-    log_fail "One or more local wheels failed to install."
+    log_fail "NumPy wheel not found in current directory!"
 fi
+
+# 2. Install OpenCV with --no-deps to prevent ABI breakage
+OPENCV_WHEEL=$(ls opencv_contrib_python_headless-*.whl 2>/dev/null | head -n 1)
+if [ -n "$OPENCV_WHEEL" ]; then
+    log_info "Installing OpenCV from $OPENCV_WHEEL..."
+    "$VENV_PIP" install "$OPENCV_WHEEL" --no-index --no-deps --no-cache-dir || log_warn "OpenCV installation had issues"
+else
+    log_fail "OpenCV wheel not found in current directory!"
+fi
+
+# 3. Install all other dependencies
+log_info "Installing remaining local wheels..."
+"$VENV_PIP" install *.whl --no-index --no-cache-dir > /dev/null 2>&1 || true
 
 log_info "Verifying requirements satisfaction..."
 if "$VENV_PIP" install --no-index --no-cache-dir -r requirements.txt; then
@@ -237,10 +252,11 @@ else
     log_warn "Some requirements are missing from the local wheel batch. Attempting check..."
 fi
     # Final dependency integrity check
-    if "$VENV_PYTHON" -c "import numpy; print(numpy.__version__)" >/dev/null 2>&1; then
-        log_ok "Dependency installation and integrity validated"
+    NP_VER=$("$VENV_PYTHON" -c "import numpy; print(numpy.__version__)" 2>/dev/null || echo "MISSING")
+    if [ "$NP_VER" != "MISSING" ]; then
+        log_ok "NumPy $NP_VER detected and imported."
     else
-        log_fail "Numpy installed but failed python import checks."
+        log_fail "NumPy installed but failed to import. Check ABI compatibility."
     fi
 
 # ============================================================================
@@ -251,6 +267,19 @@ log_info "=== PHASE 6: Validation ==="
 # Pre-flight Diagnostics (Post-install)
 log_info "Dumping PIP state..."
 "$VENV_PIP" list >> "$LOG_FILE" 2>&1 || true
+
+log_info "Checking binary linking (Phase D - ldd)..."
+CV2_PATH=$("$VENV_PYTHON" -c "import cv2; print(cv2.__file__)" 2>/dev/null || echo "")
+if [ -n "$CV2_PATH" ]; then
+    if ldd "$CV2_PATH" | grep "not found" >> "$LOG_FILE" 2>&1; then
+        log_error "Missing shared libraries detected!"
+        ldd "$CV2_PATH" | grep "not found"
+    else
+        log_ok "All binary dependencies linked"
+    fi
+else
+    log_warn "Could not locate cv2 binary for ldd check"
+fi
 
 log_info "Verifying OpenCV python bindings..."
 if "$VENV_PYTHON" -c "import cv2; print(cv2.__version__)" >/tmp/opencv_import.log 2>&1 && \

@@ -1,5 +1,5 @@
 picamera==1.13
-numpy==1.19.5
+numpy==1.21.6
 opencv-contrib-python-headless==4.5.1.48
 RPi.GPIO==0.7.1
 requests==2.26.0

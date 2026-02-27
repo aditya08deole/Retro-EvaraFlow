@@ -212,12 +212,21 @@ log_info "Purging cache before dependency install..."
 "$VENV_PIP" cache purge > /dev/null 2>&1 || true
 rm -rf /tmp/pip-* 2>/dev/null || true
 
-log_info "Installing numpy (strict)..."
-"$VENV_PIP" install --no-cache-dir \
-    --index-url https://www.piwheels.org/simple \
-    --extra-index-url https://pypi.org/simple \
-    --prefer-binary \
-    numpy==1.19.5 > /dev/null 2>&1 || true
+NUMPY_VERSION="1.19.5"
+LOCAL_NUMPY_WHEEL="numpy-${NUMPY_VERSION}-cp37-cp37m-linux_armv6l.whl"
+
+log_info "Installing Numpy $NUMPY_VERSION (ARMv6) from LOCAL FILE..."
+
+if [ ! -f "$LOCAL_NUMPY_WHEEL" ]; then
+    log_fail "LOCAL NUMPY WHEEL MISSING! You must manually download downloaded it to your PC, transfer it to the Pi, and run this script again."
+fi
+
+# Strategy: Local offline install
+if "$VENV_PIP" install "$LOCAL_NUMPY_WHEEL" --no-index --no-cache-dir; then
+    log_ok "Numpy $NUMPY_VERSION installed successfully from local file"
+else
+    log_fail "Failed to install the local Numpy wheel file. It may be corrupted."
+fi
 
 log_info "Installing requirements.txt..."
 if "$VENV_PIP" install --no-cache-dir \

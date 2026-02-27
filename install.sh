@@ -242,7 +242,6 @@ fi
     else
         log_fail "Numpy installed but failed python import checks."
     fi
-fi
 
 # ============================================================================
 # PHASE 6: Post-Installation Validation

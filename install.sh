@@ -204,9 +204,42 @@ log_info "Enforcing pip stable version $TARGET_PIP_VER..."
 log_ok "pip ready: $($VENV_PIP --version)"
 
 # ============================================================================
-# PHASE 5: OpenCV Installation (Deterministic & Hardened)
+# PHASE 5: Python Dependencies
 # ============================================================================
-log_info "=== PHASE 5: OpenCV Installation ==="
+log_info "=== PHASE 5: Python Dependencies ==="
+
+log_info "Purging cache before dependency install..."
+"$VENV_PIP" cache purge > /dev/null 2>&1 || true
+rm -rf /tmp/pip-* 2>/dev/null || true
+
+log_info "Installing numpy (strict)..."
+"$VENV_PIP" install --no-cache-dir \
+    --index-url https://www.piwheels.org/simple \
+    --extra-index-url https://pypi.org/simple \
+    --prefer-binary \
+    numpy==1.19.5 > /dev/null 2>&1 || true
+
+log_info "Installing requirements.txt..."
+if "$VENV_PIP" install --no-cache-dir \
+    --index-url https://www.piwheels.org/simple \
+    --extra-index-url https://pypi.org/simple \
+    --prefer-binary \
+    -r requirements.txt; then
+    
+    # Final dependency integrity check
+    if "$VENV_PYTHON" -c "import numpy; print(numpy.__version__)" >/dev/null 2>&1; then
+        log_ok "Dependency installation and integrity validated"
+    else
+        log_fail "Numpy installed but failed python import checks."
+    fi
+else
+    log_fail "Dependency installation failed"
+fi
+
+# ============================================================================
+# PHASE 6: OpenCV Installation (Deterministic & Hardened)
+# ============================================================================
+log_info "=== PHASE 6: OpenCV Installation ==="
 
 # Pre-flight Diagnostics
 log_info "Dumping PIP Config & Requirements State..."
@@ -240,44 +273,14 @@ else
 fi
 
 # Post-install primary validation (mandated by workflow)
-if "$VENV_PYTHON" -c "import cv2; print(cv2.__version__)" >/dev/null 2>&1 && \
-   "$VENV_PYTHON" -c "import cv2; print(hasattr(cv2,'aruco'))" >/dev/null 2>&1; then
+log_info "Verifying OpenCV python bindings..."
+if "$VENV_PYTHON" -c "import cv2; print(cv2.__version__)" >/tmp/opencv_import.log 2>&1 && \
+   "$VENV_PYTHON" -c "import cv2; print(hasattr(cv2,'aruco'))" >>/tmp/opencv_import.log 2>&1; then
     log_ok "OpenCV integrity visually confirmed inside venv."
 else
-    log_fail "OpenCV installed but failed python import checks."
-fi
-
-# ============================================================================
-# PHASE 6: Python Dependencies
-# ============================================================================
-log_info "=== PHASE 6: Python Dependencies ==="
-
-log_info "Purging cache before dependency install..."
-"$VENV_PIP" cache purge > /dev/null 2>&1 || true
-rm -rf /tmp/pip-* 2>/dev/null || true
-
-log_info "Installing numpy (strict)..."
-"$VENV_PIP" install --no-cache-dir \
-    --index-url https://www.piwheels.org/simple \
-    --extra-index-url https://pypi.org/simple \
-    --prefer-binary \
-    numpy==1.19.5 > /dev/null 2>&1 || true
-
-log_info "Installing requirements.txt..."
-if "$VENV_PIP" install --no-cache-dir \
-    --index-url https://www.piwheels.org/simple \
-    --extra-index-url https://pypi.org/simple \
-    --prefer-binary \
-    -r requirements.txt; then
-    
-    # Final dependency integrity check
-    if "$VENV_PYTHON" -c "import numpy; print(numpy.__version__)" >/dev/null 2>&1; then
-        log_ok "Dependency installation and integrity validated"
-    else
-        log_fail "Numpy installed but failed python import checks."
-    fi
-else
-    log_fail "Dependency installation failed"
+    log_error "OpenCV python import check failed. Details below:"
+    cat /tmp/opencv_import.log | tee -a "$LOG_FILE"
+    log_fail "OpenCV installed but failed python import checks. (Likely Numpy incompatibility)"
 fi
 
 # ============================================================================

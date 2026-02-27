@@ -236,54 +236,23 @@ if "$VENV_PIP" install --no-index --no-cache-dir -r requirements.txt; then
 else
     log_warn "Some requirements are missing from the local wheel batch. Attempting check..."
 fi
-    
     # Final dependency integrity check
     if "$VENV_PYTHON" -c "import numpy; print(numpy.__version__)" >/dev/null 2>&1; then
         log_ok "Dependency installation and integrity validated"
     else
         log_fail "Numpy installed but failed python import checks."
     fi
-else
-    log_fail "Dependency installation failed"
 fi
 
 # ============================================================================
-# PHASE 6: OpenCV Installation (Deterministic & Hardened)
+# PHASE 6: Post-Installation Validation
 # ============================================================================
-log_info "=== PHASE 6: OpenCV Installation ==="
+log_info "=== PHASE 6: Validation ==="
 
-# Pre-flight Diagnostics
-log_info "Dumping PIP Config & Requirements State..."
-echo "--- requirements.txt contents ---" >> "$LOG_FILE"
-cat requirements.txt >> "$LOG_FILE" 2>&1 || true
-echo "--- pip config list ---" >> "$LOG_FILE"
-"$VENV_PIP" config list >> "$LOG_FILE" 2>&1 || true
-echo "--- PIP_REQUIRE_HASHES environment ---" >> "$LOG_FILE"
-echo "${PIP_REQUIRE_HASHES:-Not Set}" >> "$LOG_FILE" 2>&1 || true
+# Pre-flight Diagnostics (Post-install)
+log_info "Dumping PIP state..."
+"$VENV_PIP" list >> "$LOG_FILE" 2>&1 || true
 
-# Sanitary purge
-log_info "Sanitizing environment..."
-"$VENV_PIP" uninstall -y opencv-python opencv-contrib-python opencv-python-headless opencv-contrib-python-headless 2>/dev/null || true
-"$VENV_PIP" cache purge > /dev/null 2>&1 || true
-rm -rf /tmp/pip-* 2>/dev/null || true
-
-OPENCV_VERSION="4.5.1.48"
-LOCAL_WHEEL_NAME="opencv_contrib_python_headless-${OPENCV_VERSION}-cp37-cp37m-linux_armv6l.whl"
-
-log_info "Installing OpenCV $OPENCV_VERSION (ARMv6) from LOCAL FILE..."
-
-if [ ! -f "$LOCAL_WHEEL_NAME" ]; then
-    log_fail "LOCAL WHEEL MISSING! You must manually download $LOCAL_WHEEL_NAME to your PC, place it in the Evaraflow folder on the SD card, and run this script again."
-fi
-
-# Strategy: Local offline install
-if "$VENV_PIP" install "$LOCAL_WHEEL_NAME" --no-index --no-cache-dir; then
-    log_ok "OpenCV $OPENCV_VERSION installed successfully from local file"
-else
-    log_fail "Failed to install the local wheel file. It may be corrupted."
-fi
-
-# Post-install primary validation (mandated by workflow)
 log_info "Verifying OpenCV python bindings..."
 if "$VENV_PYTHON" -c "import cv2; print(cv2.__version__)" >/tmp/opencv_import.log 2>&1 && \
    "$VENV_PYTHON" -c "import cv2; print(hasattr(cv2,'aruco'))" >>/tmp/opencv_import.log 2>&1; then
@@ -291,7 +260,7 @@ if "$VENV_PYTHON" -c "import cv2; print(cv2.__version__)" >/tmp/opencv_import.lo
 else
     log_error "OpenCV python import check failed. Details below:"
     cat /tmp/opencv_import.log | tee -a "$LOG_FILE"
-    log_fail "OpenCV installed but failed python import checks. (Likely Numpy incompatibility)"
+    log_fail "OpenCV installed but failed python import checks. Check missing system libs."
 fi
 
 # ============================================================================

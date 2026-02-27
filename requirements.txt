@@ -1,21 +1,8 @@
-# ============================================================================
-# RetroFit Image Capture Service v2.1 — Dependencies
-# Optimized for: Raspberry Pi Zero W (ARMv6)
-# Platform: Raspbian Buster / Python 3.7
-# ============================================================================
-
-# Note: OpenCV is handled separately in install.sh for determinism.
-# Do NOT include opencv-contrib-python-headless here.
-
-# --- Core Dependencies ---
 picamera==1.13
 numpy==1.19.5
+opencv-contrib-python-headless==4.5.1.48
 RPi.GPIO==0.7.1
-
-# --- Networking & API ---
 requests==2.26.0
 urllib3==1.26.7
-
-# --- Utilities ---
 python-dateutil==2.8.2
 pytz==2021.3

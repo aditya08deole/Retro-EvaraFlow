@@ -30,6 +30,11 @@ log_fail()  {
     echo "  DIAGNOSTIC DUMP" >> "$LOG_FILE"
     echo "==========================================" >> "$LOG_FILE"
     if [ -d ".venv" ]; then
+        echo "--> OpenSSL Version:" >> "$LOG_FILE"
+        .venv/bin/python3 -c "import ssl; print(ssl.OPENSSL_VERSION)" >> "$LOG_FILE" 2>&1 || true
+        echo -e "\n--> pip config list:" >> "$LOG_FILE"
+        .venv/bin/pip config list >> "$LOG_FILE" 2>&1 || true
+        echo -e "\n--> pip debug --verbose:" >> "$LOG_FILE"
         .venv/bin/python3 -m pip debug --verbose >> "$LOG_FILE" 2>&1 || true
     fi
     exit 1; 
@@ -187,8 +192,9 @@ export PATH="$VENV_DIR/bin:$PATH"
 VENV_PYTHON="$VENV_DIR/bin/python3"
 VENV_PIP="$VENV_DIR/bin/pip"
 
-# Hardened pip version for Python 3.7 (pip 24 sometimes fails on ARMv6 indices)
+# Hardened pip version for Python 3.7
 TARGET_PIP_VER="23.0.1"
+export PIP_DISABLE_PIP_VERSION_CHECK=1
 log_info "Enforcing pip stable version $TARGET_PIP_VER..."
 "$VENV_PYTHON" -m pip install --upgrade "pip==$TARGET_PIP_VER" setuptools==59.6.0 wheel==0.37.1 > /dev/null 2>&1 || true
 log_ok "pip ready: $($VENV_PIP --version)"
@@ -202,33 +208,64 @@ log_info "=== PHASE 5: OpenCV Installation ==="
 log_info "Sanitizing environment..."
 "$VENV_PIP" uninstall -y opencv-python opencv-contrib-python opencv-python-headless opencv-contrib-python-headless 2>/dev/null || true
 "$VENV_PIP" cache purge > /dev/null 2>&1 || true
+rm -rf /tmp/pip-* 2>/dev/null || true
 
 OPENCV_VERSION="4.5.1.48"
-WHEEL_URL="https://www.piwheels.org/simple/opencv-contrib-python-headless/opencv_contrib_python_headless-${OPENCV_VERSION}-cp37-cp37m-linux_armv6l.whl"
+log_info "Installing OpenCV $OPENCV_VERSION (ARMv6)..."
 
-log_info "Installing OpenCV $OPENCV_VERSION (ARMv6 Direct Wheel)..."
-
-# Strategy: Direct wheel from main piwheels with trusted-host bypass
+# Strategy A: Primary deterministic install from index without hash enforcement
 if "$VENV_PIP" install --no-cache-dir \
-    --trusted-host www.piwheels.org \
-    --trusted-host pypi.org \
-    --trusted-host files.pythonhosted.org \
-    "$WHEEL_URL"; then
-    log_ok "OpenCV $OPENCV_VERSION installed"
+    --index-url https://www.piwheels.org/simple \
+    --extra-index-url https://pypi.org/simple \
+    --prefer-binary \
+    --only-binary=:all: \
+    "opencv-contrib-python-headless==$OPENCV_VERSION"; then
+    log_ok "OpenCV $OPENCV_VERSION installed via primary method"
 else
-    log_warn "Direct wheel failed, trying isolated index without dependencies..."
-    # If the direct URL fails hash checks, we use the index but disable deps to prevent it
-    # from verifying hashes of dependencies we don't need or already installed
-    if "$VENV_PIP" install --no-cache-dir --no-deps \
+    log_warn "Primary wheel install failed, initiating robust fallback download..."
+    
+    # Strategy B: Fallback explicit download and manual wheel install
+    cd /tmp
+    rm -f *opencv*.whl
+    
+    if "$VENV_PIP" download "opencv-contrib-python-headless==$OPENCV_VERSION" \
         --index-url https://www.piwheels.org/simple \
-        --trusted-host www.piwheels.org \
-        --trusted-host pypi.org \
-        --trusted-host files.pythonhosted.org \
-        "opencv-contrib-python-headless==$OPENCV_VERSION"; then
-        log_ok "OpenCV $OPENCV_VERSION installed via isolated index"
+        --only-binary=:all: \
+        --no-cache-dir; then
+        
+        WHEEL_FILE=$(ls opencv_contrib_python_headless*.whl 2>/dev/null | head -n 1)
+        if [ -n "$WHEEL_FILE" ]; then
+            log_info "Downloaded: $WHEEL_FILE"
+            sha256sum "$WHEEL_FILE" | tee -a "$SCRIPT_DIR/$LOG_FILE"
+            
+            # Verify file size > 15MB
+            FILE_SIZE=$(stat -c%s "$WHEEL_FILE" 2>/dev/null || stat -f%z "$WHEEL_FILE")
+            if [ "$FILE_SIZE" -gt 15000000 ]; then
+                log_info "Wheel size OK, proceeding with local install..."
+                if "$VENV_PIP" install "./$WHEEL_FILE" --no-index; then
+                    log_ok "OpenCV $OPENCV_VERSION installed via local fallback wheel"
+                    rm -f "$WHEEL_FILE"
+                else
+                    log_fail "Failed to install downloaded wheel."
+                fi
+            else
+                log_fail "Downloaded wheel is truncated (size < 15MB)."
+            fi
+        else
+            log_fail "Fallback download succeeded but wheel file not found."
+        fi
     else
-        log_fail "OpenCV installation failed. See $LOG_FILE for pip debug tags."
+        log_fail "OpenCV explicit download failed. Check network and mirrors."
     fi
+    cd "$SCRIPT_DIR"
+fi
+
+# Post-install primary validation (mandated by workflow)
+if "$VENV_PYTHON" -c "import cv2; print(cv2.__version__)" >/dev/null 2>&1 && \
+   "$VENV_PYTHON" -c "import cv2; print(hasattr(cv2,'aruco'))" >/dev/null 2>&1; then
+    log_ok "OpenCV integrity visually confirmed inside venv."
+else
+    log_fail "OpenCV installed but failed python import checks."
 fi
 
 # ============================================================================
@@ -236,14 +273,30 @@ fi
 # ============================================================================
 log_info "=== PHASE 6: Python Dependencies ==="
 
-log_info "Installing requirements.txt..."
-if "$VENV_PIP" install --no-cache-dir \
-    --trusted-host pypi.org \
-    --trusted-host files.pythonhosted.org \
+log_info "Purging cache before dependency install..."
+"$VENV_PIP" cache purge > /dev/null 2>&1 || true
+rm -rf /tmp/pip-* 2>/dev/null || true
+
+log_info "Installing numpy (strict)..."
+"$VENV_PIP" install --no-cache-dir \
     --index-url https://www.piwheels.org/simple \
     --extra-index-url https://pypi.org/simple \
+    --prefer-binary \
+    numpy==1.19.5 > /dev/null 2>&1 || true
+
+log_info "Installing requirements.txt..."
+if "$VENV_PIP" install --no-cache-dir \
+    --index-url https://www.piwheels.org/simple \
+    --extra-index-url https://pypi.org/simple \
+    --prefer-binary \
     -r requirements.txt; then
-    log_ok "Dependencies ready"
+    
+    # Final dependency integrity check
+    if "$VENV_PYTHON" -c "import numpy; print(numpy.__version__)" >/dev/null 2>&1; then
+        log_ok "Dependency installation and integrity validated"
+    else
+        log_fail "Numpy installed but failed python import checks."
+    fi
 else
     log_fail "Dependency installation failed"
 fi

@@ -224,53 +224,19 @@ log_info "Sanitizing environment..."
 rm -rf /tmp/pip-* 2>/dev/null || true
 
 OPENCV_VERSION="4.5.1.48"
-log_info "Installing OpenCV $OPENCV_VERSION (ARMv6)..."
+LOCAL_WHEEL_NAME="opencv_contrib_python_headless-${OPENCV_VERSION}-cp37-cp37m-linux_armv6l.whl"
 
-# Strategy A: Primary deterministic install from index without hash enforcement
-if "$VENV_PIP" install --no-cache-dir \
-    --index-url https://www.piwheels.org/simple \
-    --extra-index-url https://pypi.org/simple \
-    --prefer-binary \
-    --only-binary=:all: \
-    "opencv-contrib-python-headless==$OPENCV_VERSION"; then
-    log_ok "OpenCV $OPENCV_VERSION installed via primary method"
+log_info "Installing OpenCV $OPENCV_VERSION (ARMv6) from LOCAL FILE..."
+
+if [ ! -f "$LOCAL_WHEEL_NAME" ]; then
+    log_fail "LOCAL WHEEL MISSING! You must manually download $LOCAL_WHEEL_NAME to your PC, place it in the Evaraflow folder on the SD card, and run this script again."
+fi
+
+# Strategy: Local offline install
+if "$VENV_PIP" install "$LOCAL_WHEEL_NAME" --no-index --no-cache-dir; then
+    log_ok "OpenCV $OPENCV_VERSION installed successfully from local file"
 else
-    log_warn "Primary wheel install failed, initiating robust fallback download..."
-    
-    # Strategy B: Fallback explicit download and manual wheel install
-    cd /tmp
-    rm -f *opencv*.whl
-    
-    if "$VENV_PIP" download "opencv-contrib-python-headless==$OPENCV_VERSION" \
-        --index-url https://www.piwheels.org/simple \
-        --only-binary=:all: \
-        --no-cache-dir; then
-        
-        WHEEL_FILE=$(ls opencv_contrib_python_headless*.whl 2>/dev/null | head -n 1)
-        if [ -n "$WHEEL_FILE" ]; then
-            log_info "Downloaded: $WHEEL_FILE"
-            sha256sum "$WHEEL_FILE" | tee -a "$SCRIPT_DIR/$LOG_FILE"
-            
-            # Verify file size > 15MB
-            FILE_SIZE=$(stat -c%s "$WHEEL_FILE" 2>/dev/null || stat -f%z "$WHEEL_FILE")
-            if [ "$FILE_SIZE" -gt 15000000 ]; then
-                log_info "Wheel size OK, proceeding with local install..."
-                if "$VENV_PIP" install "./$WHEEL_FILE" --no-index; then
-                    log_ok "OpenCV $OPENCV_VERSION installed via local fallback wheel"
-                    rm -f "$WHEEL_FILE"
-                else
-                    log_fail "Failed to install downloaded wheel."
-                fi
-            else
-                log_fail "Downloaded wheel is truncated (size < 15MB)."
-            fi
-        else
-            log_fail "Fallback download succeeded but wheel file not found."
-        fi
-    else
-        log_fail "OpenCV explicit download failed. Check network and mirrors."
-    fi
-    cd "$SCRIPT_DIR"
+    log_fail "Failed to install the local wheel file. It may be corrupted."
 fi
 
 # Post-install primary validation (mandated by workflow)
